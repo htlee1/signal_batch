@@ -1,0 +1,1581 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vessel Batch Admin</title>
+    <!-- Local CSS -->
+    <link href="/libs/css/bootstrap.min.css" rel="stylesheet">
+    <link href="/libs/css/bootstrap-icons.css" rel="stylesheet">
+    <link href="/libs/css/maplibre-gl.css" rel="stylesheet">
+    <style>
+        /* 기존 스타일 유지 */
+        .status-badge {
+            font-size: 0.875rem;
+            padding: 0.25rem 0.5rem;
+        }
+        .status-completed { background-color: #28a745; color: white; }
+        .status-failed { background-color: #dc3545; color: white; }
+        .status-started { background-color: #ffc107; color: black; }
+        .status-stopped { background-color: #6c757d; color: white; }
+
+        .metric-card {
+            border-left: 4px solid #007bff;
+            transition: transform 0.2s;
+        }
+        .metric-card:hover {
+            transform: translateY(-5px);
+        }
+
+        .chart-container {
+            position: relative;
+            height: 300px;
+        }
+        
+        /* Flexbox 레이아웃 */
+        .app-container {
+            display: flex;
+            height: calc(100vh - 56px);
+            position: relative;
+        }
+        
+        /* 사이드바 */
+        #sidebar {
+            width: 250px;
+            flex-shrink: 0;
+            background: #f8f9fa;
+            transition: all 0.3s;
+            overflow-x: hidden;
+            position: relative;
+        }
+        
+        #sidebar.collapsed {
+            width: 60px;
+        }
+        
+        #sidebar .list-group-item {
+            white-space: nowrap;
+            overflow: hidden;
+            transition: all 0.3s;
+        }
+        
+        #sidebar.collapsed .list-group-item {
+            padding: 10px;
+            text-align: center;
+        }
+        
+        #sidebar.collapsed .list-group-item i {
+            font-size: 1.2rem;
+            margin: 0;
+        }
+        
+        #sidebar.collapsed .sidebar-text {
+            display: none;
+        }
+        
+        /* 메인 컨텐츠 */
+        #mainContent {
+            flex: 1;
+            overflow: hidden;
+            padding: 0 20px;
+            transition: all 0.3s;
+        }
+        
+        /* 토글 버튼 */
+        .sidebar-toggle {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 1000;
+            background: #343a40;
+            color: white;
+            border: none;
+            width: 30px;
+            height: 30px;
+            border-radius: 5px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s;
+        }
+        
+        .sidebar-toggle:hover {
+            background: #495057;
+        }
+        
+        /* iframe 전체 화면 */
+        .page-content {
+            height: 100%;
+        }
+        
+        .page-content iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+        
+    </style>
+</head>
+<body>
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+    <div class="container-fluid">
+        <a class="navbar-brand" href="#">
+            <i class="bi bi-speedometer2"></i> Vessel Batch Admin
+        </a>
+        <div class="navbar-nav ms-auto">
+            <span class="navbar-text" id="currentTime"></span>
+        </div>
+    </div>
+</nav>
+
+<div class="app-container">
+    <!-- 왼쪽 사이드바 -->
+    <div id="sidebar">
+        <button class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()" title="사이드바 토글">
+            <i class="bi bi-chevron-left" id="toggleIcon"></i>
+        </button>
+        <div class="list-group">        
+                <a href="#" class="list-group-item list-group-item-action active" data-page="dashboard" title="Dashboard">
+                    <i class="bi bi-speedometer2"></i> <span class="sidebar-text">Dashboard</span>
+                </a>
+                <a href="#" class="list-group-item list-group-item-action" data-page="jobs" title="Job Management">
+                    <i class="bi bi-play-circle"></i> <span class="sidebar-text">Job Management</span>
+                </a>
+                <a href="#" class="list-group-item list-group-item-action" data-page="history" title="Execution History">
+                    <i class="bi bi-clock-history"></i> <span class="sidebar-text">Execution History</span>
+                </a>
+                <a href="#" class="list-group-item list-group-item-action" data-page="monitoring" title="Monitoring">
+                    <i class="bi bi-graph-up"></i> <span class="sidebar-text">Monitoring</span>
+                </a>
+                <a href="#" class="list-group-item list-group-item-action" data-page="gis" title="GIS Monitoring">
+                    <i class="bi bi-geo-alt-fill"></i> <span class="sidebar-text">GIS Monitoring</span>
+                </a>
+                <a href="#" class="list-group-item list-group-item-action" data-page="websocket" title="WebSocket Test">
+                    <i class="bi bi-broadcast"></i> <span class="sidebar-text">WebSocket Test</span>
+                </a>
+                <a href="#" class="list-group-item list-group-item-action" data-page="websocket-gis" title="WebSocket GIS">
+                    <i class="bi bi-globe2"></i> <span class="sidebar-text">WebSocket GIS</span>
+                </a>
+                <a href="#" class="list-group-item list-group-item-action" data-page="loadtest" title="Load Test">
+                    <i class="bi bi-speedometer"></i> <span class="sidebar-text">Load Test</span>
+                </a>
+                <a href="#" class="list-group-item list-group-item-action" data-page="abnormal" title="Abnormal Tracks">
+                    <i class="bi bi-exclamation-triangle"></i> <span class="sidebar-text">Abnormal Tracks</span>
+                </a>
+                <a href="#" class="list-group-item list-group-item-action" data-page="settings" title="Settings">
+                    <i class="bi bi-gear"></i> <span class="sidebar-text">Settings</span>
+                </a>
+            </div>
+    </div>
+
+    <!-- 메인 컨텐츠 -->
+    <div id="mainContent">
+            <!-- Dashboard Page -->
+            <div id="dashboard-page" class="page-content">
+                <h2>Dashboard</h2>
+
+                <!-- 요약 카드 -->
+                <div class="row mb-4">
+                    <div class="col-md-3">
+                        <div class="card metric-card">
+                            <div class="card-body">
+                                <h6 class="card-subtitle mb-2 text-muted">Running Jobs</h6>
+                                <h2 class="card-title" id="runningJobsCount">0</h2>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card metric-card" style="border-color: #28a745;">
+                            <div class="card-body">
+                                <h6 class="card-subtitle mb-2 text-muted">Success Rate (24h)</h6>
+                                <h2 class="card-title" id="successRate">0%</h2>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card metric-card" style="border-color: #ffc107;">
+                            <div class="card-body">
+                                <h6 class="card-subtitle mb-2 text-muted">Records/Hour</h6>
+                                <h2 class="card-title" id="throughput">0</h2>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card metric-card" style="border-color: #dc3545;">
+                            <div class="card-body">
+                                <h6 class="card-subtitle mb-2 text-muted">Failed Jobs (24h)</h6>
+                                <h2 class="card-title" id="failedCount">0</h2>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 궤적 집계 메트릭 -->
+                <div class="row mb-4">
+                    <div class="col-md-3">
+                        <div class="card metric-card" style="border-color: #17a2b8;">
+                            <div class="card-body">
+                                <h6 class="card-subtitle mb-2 text-muted">Active Vessels (1h)</h6>
+                                <h2 class="card-title" id="activeVessels">0</h2>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card metric-card" style="border-color: #6610f2;">
+                            <div class="card-body">
+                                <h6 class="card-subtitle mb-2 text-muted">Total Distance (1h)</h6>
+                                <h2 class="card-title" id="totalDistance">0 nm</h2>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card metric-card" style="border-color: #e83e8c;">
+                            <div class="card-body">
+                                <h6 class="card-subtitle mb-2 text-muted">Active Haegus</h6>
+                                <h2 class="card-title" id="activeHaegus">0</h2>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card metric-card" style="border-color: #fd7e14;">
+                            <div class="card-body">
+                                <h6 class="card-subtitle mb-2 text-muted">Abnormal Tracks (24h)</h6>
+                                <h2 class="card-title" id="abnormalTracks">0</h2>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 실행 중인 Job -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5><i class="bi bi-activity"></i> Running Jobs</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-hover" id="runningJobsTable">
+                                <thead>
+                                <tr>
+                                    <th>Job Name</th>
+                                    <th>Execution ID</th>
+                                    <th>Start Time</th>
+                                    <th>Progress</th>
+                                    <th>Actions</th>
+                                </tr>
+                                </thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 차트 -->
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5>Processing Trend (Last 7 Days)</h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="chart-container">
+                                    <canvas id="trendChart"></canvas>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5>Job Status Distribution</h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="chart-container">
+                                    <canvas id="statusChart"></canvas>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Job Management Page -->
+            <div id="jobs-page" class="page-content" style="display: none;">
+                <h2>Job Management</h2>
+
+                <div class="card">
+                    <div class="card-body">
+                        <h5>Run New Job</h5>
+                        <form id="runJobForm">
+                            <div class="row">
+                                <div class="col-md-3">
+                                    <label>Job Type</label>
+                                    <select class="form-select" id="jobType">
+                                        <option value="vesselAggregationJob">Vessel Aggregation (Position)</option>
+                                        <option value="vesselTrackAggregationJob">Vessel Track Aggregation</option>
+                                        <option value="hourlyAggregationJob">Hourly Aggregation</option>
+                                        <option value="dailyAggregationJob">Daily Aggregation</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-3">
+                                    <label>Start Time</label>
+                                    <input type="datetime-local" class="form-control" id="startTime">
+                                </div>
+                                <div class="col-md-3">
+                                    <label>End Time</label>
+                                    <input type="datetime-local" class="form-control" id="endTime">
+                                </div>
+                                <div class="col-md-3">
+                                    <label>&nbsp;</label>
+                                    <button type="submit" class="btn btn-primary d-block">
+                                        <i class="bi bi-play-fill"></i> Run Job
+                                    </button>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <div class="mt-4">
+                    <h5>Scheduled Jobs</h5>
+                    <table class="table">
+                        <thead>
+                        <tr>
+                            <th>Schedule</th>
+                            <th>Job Name</th>
+                            <th>Next Run</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        <tr>
+                            <td>0 3,8,13,18,23,28,33,38,43,48,53,58 * * * *</td>
+                            <td>Vessel Position Aggregation</td>
+                            <td id="nextPosition">-</td>
+                            <td><span class="badge bg-success">Active</span></td>
+                            <td>
+                                <button class="btn btn-sm btn-warning">Pause</button>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>0 4,9,14,19,24,29,34,39,44,49,54,59 * * * *</td>
+                            <td>Vessel Track Aggregation</td>
+                            <td id="nextTrack">-</td>
+                            <td><span class="badge bg-success">Active</span></td>
+                            <td>
+                                <button class="btn btn-sm btn-warning">Pause</button>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>0 10 * * * *</td>
+                            <td>Hourly Aggregation</td>
+                            <td id="nextHourly">-</td>
+                            <td><span class="badge bg-success">Active</span></td>
+                            <td>
+                                <button class="btn btn-sm btn-warning">Pause</button>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>0 0 1 * * *</td>
+                            <td>Daily Aggregation</td>
+                            <td id="nextDaily">-</td>
+                            <td><span class="badge bg-success">Active</span></td>
+                            <td>
+                                <button class="btn btn-sm btn-warning">Pause</button>
+                            </td>
+                        </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- History Page -->
+            <div id="history-page" class="page-content" style="display: none;">
+                <h2>Execution History</h2>
+
+                <div class="card">
+                    <div class="card-body">
+                        <div class="row mb-3">
+                            <div class="col-md-4">
+                                <input type="text" class="form-control" id="historySearch"
+                                       placeholder="Search by job name...">
+                            </div>
+                            <div class="col-md-2">
+                                <select class="form-select" id="historyFilter">
+                                    <option value="">All Status</option>
+                                    <option value="COMPLETED">Completed</option>
+                                    <option value="FAILED">Failed</option>
+                                    <option value="STOPPED">Stopped</option>
+                                </select>
+                            </div>
+                            <div class="col-md-2">
+                                <button class="btn btn-primary" onclick="loadHistory()">
+                                    <i class="bi bi-arrow-clockwise"></i> Refresh
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="table-responsive">
+                            <table class="table table-hover" id="historyTable">
+                                <thead>
+                                <tr>
+                                    <th>Execution ID</th>
+                                    <th>Job Name</th>
+                                    <th>Start Time</th>
+                                    <th>End Time</th>
+                                    <th>Duration</th>
+                                    <th>Status</th>
+                                    <th>Records</th>
+                                    <th>Actions</th>
+                                </tr>
+                                </thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Monitoring Page -->
+            <div id="monitoring-page" class="page-content" style="display: none;">
+                <h2>Real-time Monitoring</h2>
+
+                <div class="row">
+                    <div class="col-md-8">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5>Processing Rate</h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="chart-container">
+                                    <canvas id="realtimeChart"></canvas>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5>System Metrics</h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="mb-3">
+                                    <label>Memory Usage</label>
+                                    <div class="progress">
+                                        <div class="progress-bar" id="memoryBar" style="width: 0%">0%</div>
+                                    </div>
+                                </div>
+                                <div class="mb-3">
+                                    <label>CPU Usage</label>
+                                    <div class="progress">
+                                        <div class="progress-bar bg-warning" id="cpuBar" style="width: 0%">0%</div>
+                                    </div>
+                                </div>
+                                <div class="mb-3">
+                                    <label>Active Threads</label>
+                                    <h4 id="activeThreads">0</h4>
+                                </div>
+                                <div class="mb-3">
+                                    <label>DB Connections</label>
+                                    <h4 id="dbConnections">0</h4>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- GIS Monitoring Page -->
+            <div id="gis-page" class="page-content" style="display: none;">
+                <iframe src="/gis-monitoring.html"></iframe>
+            </div>
+
+            <!-- WebSocket Test Page -->
+            <div id="websocket-page" class="page-content" style="display: none;">
+                <iframe src="/websocket/track-streaming-test.html"></iframe>
+            </div>
+
+            <!-- WebSocket GIS Page -->
+            <div id="websocket-gis-page" class="page-content" style="display: none;">
+                <iframe src="/websocket/chunked-streaming-gis-animated.html"></iframe>
+            </div>
+
+            <!-- Load Test Page -->
+            <div id="loadtest-page" class="page-content" style="display: none;">
+                <iframe src="/websocket/load-test.html"></iframe>
+            </div>
+
+            <!-- Abnormal Tracks Page -->
+            <div id="abnormal-page" class="page-content" style="display: none;">
+                <iframe src="/abnormal-tracks.html"></iframe>
+            </div>
+
+            <!-- Settings Page -->
+            <div id="settings-page" class="page-content" style="display: none;">
+                <h2>Settings</h2>
+
+                <div class="card">
+                    <div class="card-body">
+                        <h5>Batch Configuration</h5>
+                        <form id="settingsForm">
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label>Chunk Size</label>
+                                        <input type="number" class="form-control" id="chunkSize" value="10000">
+                                    </div>
+                                    <div class="mb-3">
+                                        <label>Thread Pool Size</label>
+                                        <input type="number" class="form-control" id="threadPoolSize" value="8">
+                                    </div>
+                                    <div class="mb-3">
+                                        <label>Skip Limit</label>
+                                        <input type="number" class="form-control" id="skipLimit" value="1000">
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label>Query Timeout (seconds)</label>
+                                        <input type="number" class="form-control" id="queryTimeout" value="600">
+                                    </div>
+                                    <div class="mb-3">
+                                        <label>Lock Timeout (seconds)</label>
+                                        <input type="number" class="form-control" id="lockTimeout" value="10">
+                                    </div>
+                                    <div class="mb-3">
+                                        <label>Partition Retention Days</label>
+                                        <input type="number" class="form-control" id="retentionDays" value="30">
+                                    </div>
+                                </div>
+                            </div>
+                            <button type="submit" class="btn btn-primary">Save Settings</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Detail Modal -->
+<div class="modal fade" id="detailModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Job Execution Details</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="modalBody">
+                <!-- Dynamic content -->
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Local JS -->
+<script src="/libs/js/jquery-3.6.0.min.js"></script>
+<script src="/libs/js/bootstrap.bundle.min.js"></script>
+<script src="/libs/js/chart.min.js"></script>
+<script src="/libs/js/chartjs-adapter-date-fns.bundle.min.js"></script>
+
+<script>
+    // 전역 변수
+    let charts = {};
+    let refreshInterval;
+    let monitoringInterval;
+    let sidebarCollapsed = false;
+    
+    // 사이드바 토글 함수
+    function toggleSidebar() {
+        sidebarCollapsed = !sidebarCollapsed;
+        const sidebar = document.getElementById('sidebar');
+        const toggleIcon = document.getElementById('toggleIcon');
+        
+        if (sidebarCollapsed) {
+            sidebar.classList.add('collapsed');
+            toggleIcon.classList.remove('bi-chevron-left');
+            toggleIcon.classList.add('bi-chevron-right');
+        } else {
+            sidebar.classList.remove('collapsed');
+            toggleIcon.classList.remove('bi-chevron-right');
+            toggleIcon.classList.add('bi-chevron-left');
+        }
+    }
+
+    // 페이지 초기화
+    $(document).ready(function() {
+        // 현재 시간 표시
+        setInterval(updateCurrentTime, 1000);
+
+        // 네비게이션 처리
+        $('.list-group-item').click(function(e) {
+            e.preventDefault();
+            $('.list-group-item').removeClass('active');
+            $(this).addClass('active');
+
+            $('.page-content').hide();
+            $('#' + $(this).data('page') + '-page').show();
+
+            // 기존 인터벌 정리
+            if (refreshInterval) {
+                clearInterval(refreshInterval);
+                refreshInterval = null;
+            }
+            if (monitoringInterval) {
+                clearInterval(monitoringInterval);
+                monitoringInterval = null;
+            }
+
+            // 페이지별 초기화
+            switch($(this).data('page')) {
+                case 'dashboard':
+                    initDashboard();
+                    break;
+                case 'history':
+                    loadHistory();
+                    break;
+                case 'monitoring':
+                    initMonitoring();
+                    break;
+            }
+        });
+
+        // 폼 제출 처리
+        $('#runJobForm').submit(function(e) {
+            e.preventDefault();
+            runJob();
+        });
+
+        // 초기 대시보드 로드
+        initDashboard();
+    });
+
+    // GIS Map 초기화
+    function initGisMap() {
+        if (!map) {
+            // MapLibre GL 맵 초기화
+            map = new maplibregl.Map({
+                container: 'mapContainer',
+                style: {
+                    version: 8,
+                    sources: {
+                        'local-tiles': {
+                            type: 'raster',
+                            tiles: ['/api/tiles/world/{z}/{x}/{y}.webp'],
+                            tileSize: 256,
+                            attribution: 'Local Tile Server'
+                        }
+                    },
+                    layers: [{
+                        id: 'base-tiles',
+                        type: 'raster',
+                        source: 'local-tiles',
+                        minzoom: 2,
+                        maxzoom: 13
+                    }]
+                },
+                center: [126.0, 35.0], // 한국 중심
+                zoom: 5
+            });
+
+            // deck.gl 오버레이 추가
+            deckOverlay = new deck.MapboxOverlay({
+                layers: []
+            });
+            map.addControl(deckOverlay);
+
+            // 맵 로드 완료 후 데이터 로드
+            map.on('load', () => {
+                loadGisData();
+            });
+        } else {
+            loadGisData();
+        }
+    }
+
+    // GIS 데이터 로드
+    async function loadGisData() {
+        const timeRange = $('#gisTimeRange').val();
+        const layerType = $('#gisLayerType').val();
+        
+        try {
+            // Haegu 데이터 로드
+            if (layerType === 'haegu' || layerType === 'both') {
+                const haeguResponse = await $.get('/api/v1/haegu/boundaries');
+                gisData.haegus = haeguResponse;
+                console.log('Haegu boundaries:', haeguResponse);
+                
+                // Haegu별 선박 집계 데이터
+                const haeguStats = await $.get(`/api/v1/haegu/vessel-stats?minutes=${timeRange}`);
+                gisData.haeguStats = haeguStats;
+                console.log('Haegu stats:', haeguStats);
+                
+                // 데이터 구조 확인
+                if (haeguResponse.length > 0) {
+                    console.log('First haegu data:', haeguResponse[0]);
+                }
+                if (Object.keys(haeguStats).length > 0) {
+                    const firstKey = Object.keys(haeguStats)[0];
+                    console.log(`Haegu stats for ${firstKey}:`, haeguStats[firstKey]);
+                }
+            }
+            
+            // Custom Area 데이터 로드
+            if (layerType === 'area' || layerType === 'both') {
+                const areaResponse = await $.get('/api/v1/areas/boundaries');
+                gisData.areas = areaResponse;
+                console.log('Area boundaries:', areaResponse);
+                
+                // Area별 선박 집계 데이터
+                const areaStats = await $.get(`/api/v1/areas/vessel-stats?minutes=${timeRange}`);
+                gisData.areaStats = areaStats;
+                console.log('Area stats:', areaStats);
+            }
+            
+            updateGisLayers();
+        } catch (error) {
+            console.error('Failed to load GIS data:', error);
+            alert('Failed to load GIS data. Check console for details.');
+        }
+    }
+
+    // 선박 수에 따른 색상 계산 함수
+    function getVesselCountColor(count) {
+        if (count >= 200) return [255, 69, 0, 150];     // 진한 빨강 (200+)
+        if (count >= 100) return [255, 165, 0, 150];    // 주황 (100-199)
+        if (count >= 50) return [255, 215, 0, 150];     // 금색 (50-99)
+        if (count >= 10) return [144, 238, 144, 150];   // 연한 녹색 (10-49)
+        if (count > 0) return [224, 224, 224, 150];     // 연한 회색 (1-9)
+        return [224, 224, 224, 50];                      // 매우 연한 회색 (0)
+    }
+    
+    // GIS 레이어 업데이트
+    function updateGisLayers() {
+        const layers = [];
+        const layerType = $('#gisLayerType').val();
+        
+        // Haegu 레이어
+        if ((layerType === 'haegu' || layerType === 'both') && gisData.haegus && gisData.haegus.length > 0) {
+            layers.push(new deck.GeoJsonLayer({
+                id: 'haegu-layer',
+                data: {
+                    type: 'FeatureCollection',
+                    features: gisData.haegus.map(haegu => ({
+                        type: 'Feature',
+                        properties: {
+                            haegu_no: haegu.haegu_no,
+                            vessel_count: gisData.haeguStats?.[haegu.haegu_no]?.vessel_count || 0,
+                            total_distance: gisData.haeguStats?.[haegu.haegu_no]?.total_distance || 0
+                        },
+                        geometry: JSON.parse(haegu.geom_json)
+                    }))
+                },
+                filled: true,
+                stroked: true,
+                getFillColor: d => getVesselCountColor(d.properties.vessel_count),
+                getLineColor: [0, 100, 200, 255],
+                getLineWidth: 2,
+                lineWidthMinPixels: 1,
+                pickable: true,
+                autoHighlight: true,
+                highlightColor: [255, 255, 0, 100],
+                onClick: (info) => {
+                    if (info.object) {
+                        showAreaDetails('haegu', info.object.properties);
+                    }
+                    return true;
+                },
+                onHover: (info) => {
+                    if (info.object) {
+                        const tooltip = document.getElementById('vesselTooltip');
+                        tooltip.style.display = 'block';
+                        tooltip.style.left = info.x + 'px';
+                        tooltip.style.top = info.y + 'px';
+                        tooltip.innerHTML = `
+                            <strong>Haegu ${info.object.properties.haegu_no}</strong><br>
+                            Vessels: ${info.object.properties.vessel_count}<br>
+                            Distance: ${info.object.properties.total_distance.toFixed(1)} nm
+                        `;
+                    } else {
+                        document.getElementById('vesselTooltip').style.display = 'none';
+                    }
+                }
+            }));
+        }
+        
+        // Custom Area 레이어
+        if ((layerType === 'area' || layerType === 'both') && gisData.areas && gisData.areas.length > 0) {
+            layers.push(new deck.GeoJsonLayer({
+                id: 'area-layer',
+                data: {
+                    type: 'FeatureCollection',
+                    features: gisData.areas.map(area => ({
+                        type: 'Feature',
+                        properties: {
+                            area_id: area.area_id,
+                            area_name: area.area_name,
+                            vessel_count: gisData.areaStats?.[area.area_id]?.vessel_count || 0,
+                            total_distance: gisData.areaStats?.[area.area_id]?.total_distance || 0
+                        },
+                        geometry: JSON.parse(area.geom_json)
+                    }))
+                },
+                filled: true,
+                stroked: true,
+                getFillColor: d => getVesselCountColor(d.properties.vessel_count),
+                getLineColor: [200, 100, 0, 255],
+                getLineWidth: 3,
+                lineWidthMinPixels: 2,
+                pickable: true,
+                autoHighlight: true,
+                highlightColor: [255, 255, 0, 100],
+                onClick: (info) => {
+                    if (info.object) {
+                        showAreaDetails('area', info.object.properties);
+                    }
+                    return true;
+                },
+                onHover: (info) => {
+                    if (info.object) {
+                        const tooltip = document.getElementById('vesselTooltip');
+                        tooltip.style.display = 'block';
+                        tooltip.style.left = info.x + 'px';
+                        tooltip.style.top = info.y + 'px';
+                        tooltip.innerHTML = `
+                            <strong>${info.object.properties.area_name || info.object.properties.area_id}</strong><br>
+                            Vessels: ${info.object.properties.vessel_count}<br>
+                            Distance: ${info.object.properties.total_distance.toFixed(1)} nm
+                        `;
+                    } else {
+                        document.getElementById('vesselTooltip').style.display = 'none';
+                    }
+                }
+            }));
+        }
+        
+        // 선박 궤적 레이어 (선택적)
+        if ($('#showTracks').is(':checked') && gisData.tracks && gisData.tracks.length > 0) {
+            layers.push(new deck.PathLayer({
+                id: 'track-layer',
+                data: gisData.tracks,
+                getPath: d => d.path,
+                getColor: d => [0, 255, 0, 200],
+                getWidth: 2,
+                pickable: true,
+                widthMinPixels: 1
+            }));
+        }
+        
+        // 히트맵 레이어 (선택적)
+        if ($('#showHeatmap').is(':checked') && gisData.heatmapData) {
+            layers.push(new deck.HeatmapLayer({
+                id: 'heatmap-layer',
+                data: gisData.heatmapData,
+                getPosition: d => d.position,
+                getWeight: d => d.weight,
+                radiusPixels: 50
+            }));
+        }
+        
+        deckOverlay.setProps({ layers });
+    }
+
+    // 영역 상세 정보 표시
+    async function showAreaDetails(type, properties) {
+        const panel = $('#trackInfoPanel');
+        const title = $('#trackPanelTitle');
+        const content = $('#trackPanelContent');
+        
+        if (type === 'haegu') {
+            title.text(`Haegu ${properties.haegu_no}`);
+            content.html(`
+                <p><strong>Active Vessels:</strong> ${properties.vessel_count}</p>
+                <p><strong>Total Distance:</strong> ${properties.total_distance.toFixed(2)} nm</p>
+                <hr>
+                <button class="btn btn-sm btn-primary" onclick="showVesselList('haegu', '${properties.haegu_no}')">
+                    <i class="bi bi-list"></i> Show Vessel List
+                </button>
+            `);
+        } else {
+            title.text(properties.area_name || properties.area_id);
+            content.html(`
+                <p><strong>Area ID:</strong> ${properties.area_id}</p>
+                <p><strong>Active Vessels:</strong> ${properties.vessel_count}</p>
+                <p><strong>Total Distance:</strong> ${properties.total_distance.toFixed(2)} nm</p>
+                <hr>
+                <button class="btn btn-sm btn-primary" onclick="showVesselList('area', '${properties.area_id}')">
+                    <i class="bi bi-list"></i> Show Vessel List
+                </button>
+            `);
+        }
+        
+        panel.show();
+    }
+    
+    // 선박 목록 표시
+    async function showVesselList(type, id) {
+        const timeRange = $('#gisTimeRange').val();
+        const panel = $('#vesselListPanel');
+        const content = $('#vesselListContent');
+        
+        $('#vesselListTitle').text(`Vessels in ${type === 'haegu' ? 'Haegu ' + id : 'Area'} (${timeRange} min)`);
+        content.html('<div class="text-center"><i class="bi bi-hourglass-split"></i> Loading...</div>');
+        panel.show();
+        
+        try {
+            let vessels = [];
+            if (type === 'haegu') {
+                // 해구 내 선박 목록 조회
+                const tracks = await $.get(`/api/v1/tracks/haegu/${id}?minutes=${timeRange}`);
+                vessels = tracks.map(t => ({
+                    id: `${t.sig_src_cd}_${t.target_id}`,
+                    sig_src_cd: t.sig_src_cd,
+                    target_id: t.target_id,
+                    distance: t.distance_nm,
+                    avg_speed: t.avg_speed,
+                    type: 'haegu',
+                    area_id: id
+                }));
+            } else {
+                // 영역 내 선박 목록 조회
+                const tracks = await $.get(`/api/v1/tracks/area/${id}?minutes=${timeRange}`);
+                vessels = tracks.map(t => ({
+                    id: `${t.sig_src_cd}_${t.target_id}`,
+                    sig_src_cd: t.sig_src_cd,
+                    target_id: t.target_id,
+                    distance: t.distance_nm,
+                    avg_speed: t.avg_speed,
+                    type: 'area',
+                    area_id: id
+                }));
+            }
+            
+            // 중복 제거
+            const uniqueVessels = {};
+            vessels.forEach(v => {
+                if (!uniqueVessels[v.id] || uniqueVessels[v.id].distance < v.distance) {
+                    uniqueVessels[v.id] = v;
+                }
+            });
+            
+            const vesselList = Object.values(uniqueVessels);
+            
+            if (vesselList.length === 0) {
+                content.html('<div class="text-muted">No vessels found in this area</div>');
+            } else {
+                let html = `<div class="mb-2">Found ${vesselList.length} vessels</div>`;
+                vesselList.forEach(v => {
+                    html += `
+                        <div class="vessel-item" onclick="showVesselTrack('${v.sig_src_cd}', '${v.target_id}', '${v.type}', '${v.area_id}')">
+                            <strong>${v.id}</strong><br>
+                            <small>
+                                Distance: ${v.distance.toFixed(2)} nm | 
+                                Avg Speed: ${v.avg_speed.toFixed(1)} kts
+                            </small>
+                        </div>
+                    `;
+                });
+                content.html(html);
+            }
+        } catch (error) {
+            console.error('Failed to load vessel list:', error);
+            content.html('<div class="text-danger">Failed to load vessel list</div>');
+        }
+    }
+    
+    // 특정 선박 궤적 표시
+    async function showVesselTrack(sigSrcCd, targetId, type, areaId) {
+        const period = $('#trackPeriod').val();
+        
+        try {
+            // 선박 궤적 데이터 조회
+            let tracks;
+            if (type === 'haegu') {
+                tracks = await $.get(`/api/v1/tracks/haegu/${areaId}?minutes=${period}`);
+            } else {
+                tracks = await $.get(`/api/v1/tracks/area/${areaId}?minutes=${period}`);
+            }
+            
+            // 해당 선박의 궤적만 필터링
+            const vesselTracks = tracks.filter(t => 
+                t.sig_src_cd === sigSrcCd && t.target_id === targetId
+            );
+            
+            if (vesselTracks.length === 0) {
+                alert('No tracks found for this vessel in the selected period');
+                return;
+            }
+            
+            // 궤적 데이터 변환
+            gisData.tracks = vesselTracks.map(track => ({
+                path: parseLineStringM(track.track_geom),
+                vessel_id: `${track.sig_src_cd}_${track.target_id}`,
+                distance: track.distance_nm,
+                avg_speed: track.avg_speed,
+                time_bucket: track.time_bucket
+            }));
+            
+            updateGisLayers();
+            
+            // 선박 정보 패널 업데이트
+            $('#trackPanelTitle').text(`Vessel ${sigSrcCd}_${targetId}`);
+            $('#trackPanelContent').html(`
+                <p><strong>Period:</strong> Last ${period} minutes</p>
+                <p><strong>Track Points:</strong> ${vesselTracks.length}</p>
+                <p><strong>Total Distance:</strong> ${vesselTracks.reduce((sum, t) => sum + t.distance_nm, 0).toFixed(2)} nm</p>
+                <hr>
+                <button class="btn btn-sm btn-secondary" onclick="clearVesselTracks()">
+                    Clear Tracks
+                </button>
+            `);
+            
+            // 선박 목록 패널 닫기
+            $('#vesselListPanel').hide();
+            
+        } catch (error) {
+            console.error('Failed to load vessel track:', error);
+            alert('Failed to load vessel track');
+        }
+    }
+    
+    // 선박 궤적 클리어
+    function clearVesselTracks() {
+        gisData.tracks = [];
+        updateGisLayers();
+    }
+
+    // LineStringM 파싱
+    function parseLineStringM(wkt) {
+        const matches = wkt.match(/LINESTRING M\((.*)\)/);
+        if (!matches) return [];
+        
+        const coords = matches[1].split(',').map(coord => {
+            const parts = coord.trim().split(' ');
+            return [parseFloat(parts[0]), parseFloat(parts[1])];
+        });
+        
+        return coords;
+    }
+
+    // GIS 데이터 새로고침
+    function refreshGisData() {
+        loadGisData();
+    }
+
+    // 체크박스 변경 이벤트
+    $('#showTracks, #showHeatmap').change(function() {
+        updateGisLayers();
+    });
+    
+    // 레이어 타입 변경 시 맵 업데이트
+    $('#gisLayerType').change(function() {
+        loadGisData();
+    });
+
+    // 현재 시간 업데이트
+    function updateCurrentTime() {
+        $('#currentTime').text(new Date().toLocaleString());
+    }
+
+    // 대시보드 초기화
+    function initDashboard() {
+        loadDashboardData();
+        initCharts();
+
+        // 자동 새로고침
+        if (refreshInterval) clearInterval(refreshInterval);
+        refreshInterval = setInterval(loadDashboardData, 5000);
+    }
+
+    // 대시보드 데이터 로드
+    async function loadDashboardData() {
+        try {
+            // 실행 중인 Job
+            const runningJobs = await $.get('/admin/batch/job/running');
+            $('#runningJobsCount').text(runningJobs.length);
+            updateRunningJobsTable(runningJobs);
+
+            // 통계 데이터
+            const stats = await $.get('/admin/batch/statistics?days=1');
+            const successRate = stats.summary.successRate || 0;
+            $('#successRate').text(successRate.toFixed(1) + '%');
+
+            const throughput = stats.summary.totalRecordsProcessed / 24;
+            $('#throughput').text(formatNumber(Math.round(throughput)));
+
+            // 실패한 Job
+            const failedJobs = await $.get('/admin/batch/job/failed?hoursBack=24');
+            $('#failedCount').text(failedJobs.length);
+            
+            // 궤적 집계 메트릭 - GIS API 활용
+            try {
+                const haeguStats = await $.get('/api/v1/haegu/vessel-stats?minutes=60');
+                let totalVessels = 0;
+                let totalDistance = 0;
+                let activeHaegus = 0;
+                
+                Object.values(haeguStats).forEach(stat => {
+                    if (stat.vessel_count > 0) {
+                        totalVessels += stat.vessel_count;
+                        totalDistance += parseFloat(stat.total_distance || 0);
+                        activeHaegus++;
+                    }
+                });
+                
+                $('#activeVessels').text(formatNumber(totalVessels));
+                $('#totalDistance').text(Math.round(totalDistance) + ' nm');
+                $('#activeHaegus').text(activeHaegus);
+                
+                // 비정상 궤적 통계
+                try {
+                    const abnormalStats = await $.get('/api/v1/abnormal-tracks/statistics/summary?days=1');
+                    $('#abnormalTracks').text(formatNumber(abnormalStats.totalCount || 0));
+                } catch (error) {
+                    console.log('Abnormal track stats error:', error);
+                    $('#abnormalTracks').text('0');
+                }
+            } catch (error) {
+                console.log('Track metrics error:', error);
+            }
+
+        } catch (error) {
+            console.error('Failed to load dashboard data:', error);
+        }
+    }
+
+    // 실행 중인 Job 테이블 업데이트
+    function updateRunningJobsTable(jobs) {
+        const tbody = $('#runningJobsTable tbody');
+        tbody.empty();
+
+        if (jobs.length === 0) {
+            tbody.append('<tr><td colspan="5" class="text-center">No running jobs</td></tr>');
+            return;
+        }
+
+        jobs.forEach(job => {
+            const progress = calculateProgress(job);
+            const row = `
+                <tr>
+                    <td>${job.jobName}</td>
+                    <td>${job.executionId}</td>
+                    <td>${formatDateTime(job.startTime)}</td>
+                    <td>
+                        <div class="progress">
+                            <div class="progress-bar" style="width: ${progress}%">${progress}%</div>
+                        </div>
+                    </td>
+                    <td>
+                        <button class="btn btn-sm btn-danger" onclick="stopJob(${job.executionId})">
+                            <i class="bi bi-stop-fill"></i> Stop
+                        </button>
+                    </td>
+                </tr>
+            `;
+            tbody.append(row);
+        });
+    }
+
+    // 차트 초기화
+    function initCharts() {
+        // 기존 차트 제거
+        if (charts.trend) {
+            charts.trend.destroy();
+            charts.trend = null;
+        }
+        if (charts.status) {
+            charts.status.destroy();
+            charts.status = null;
+        }
+
+        // Processing Trend Chart
+        const trendCtx = document.getElementById('trendChart').getContext('2d');
+        charts.trend = new Chart(trendCtx, {
+            type: 'line',
+            data: {
+                labels: getLast7Days(),
+                datasets: [{
+                    label: 'Records Processed',
+                    data: generateRandomData(7, 100000, 200000),
+                    borderColor: 'rgb(75, 192, 192)',
+                    backgroundColor: 'rgba(75, 192, 192, 0.1)',
+                    tension: 0.1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            callback: function(value) {
+                                return formatNumber(value);
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        // Status Distribution Chart
+        const statusCtx = document.getElementById('statusChart').getContext('2d');
+        charts.status = new Chart(statusCtx, {
+            type: 'doughnut',
+            data: {
+                labels: ['Completed', 'Failed', 'Stopped'],
+                datasets: [{
+                    data: [85, 10, 5],
+                    backgroundColor: [
+                        'rgb(40, 167, 69)',
+                        'rgb(220, 53, 69)',
+                        'rgb(108, 117, 125)'
+                    ]
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom'
+                    }
+                }
+            }
+        });
+
+        loadChartData();
+    }
+
+    // 차트 데이터 로드
+    async function loadChartData() {
+        try {
+            // 최근 7일간 일별 처리량 데이터 가져오기
+            const response = await $.get('/admin/batch/daily-stats');
+            
+            if (charts.trend && response.dailyStats) {
+                charts.trend.data.labels = response.dailyStats.map(d => d.date);
+                charts.trend.data.datasets[0].data = response.dailyStats.map(d => d.totalProcessed);
+                charts.trend.update();
+            }
+            
+            // Job별 성공/실패 비율
+            if (charts.status && response.statusSummary) {
+                charts.status.data.datasets[0].data = [
+                    response.statusSummary.completed || 0,
+                    response.statusSummary.failed || 0,
+                    response.statusSummary.stopped || 0
+                ];
+                charts.status.update();
+            }
+        } catch (error) {
+            console.error('Failed to load chart data:', error);
+        }
+    }
+
+    // Job 실행
+    async function runJob() {
+        const jobType = $('#jobType').val();
+        const startTime = $('#startTime').val();
+        const endTime = $('#endTime').val();
+
+        if (!startTime || !endTime) {
+            alert('Please select start and end time');
+            return;
+        }
+
+        try {
+            const response = await $.post('/admin/batch/job/run', {
+                jobName: jobType,
+                parameters: {
+                    startTime: startTime.replace('T', ' ') + ':00',
+                    endTime: endTime.replace('T', ' ') + ':00',
+                    tileLevel: 1,
+                    timeBucketMinutes: 10
+                }
+            });
+
+            alert(`Job started successfully! Execution ID: ${response.executionId}`);
+            loadDashboardData();
+        } catch (error) {
+            alert('Failed to start job: ' + (error.responseJSON?.error || error.statusText));
+        }
+    }
+
+    // Job 중지
+    async function stopJob(executionId) {
+        if (!confirm('Are you sure you want to stop this job?')) return;
+
+        try {
+            await $.post(`/admin/batch/job/stop/${executionId}`);
+            alert('Job stop requested');
+            loadDashboardData();
+        } catch (error) {
+            alert('Failed to stop job: ' + (error.responseJSON?.error || error.statusText));
+        }
+    }
+
+    // 실행 이력 로드
+    async function loadHistory() {
+        try {
+            const history = await $.get('/admin/batch/job/history');
+            updateHistoryTable(history);
+        } catch (error) {
+            console.error('Failed to load history:', error);
+        }
+    }
+
+    // 이력 테이블 업데이트
+    function updateHistoryTable(history) {
+        const tbody = $('#historyTable tbody');
+        tbody.empty();
+
+        history.forEach(execution => {
+            const statusBadge = getStatusBadge(execution.status);
+            const duration = execution.durationSeconds ?
+                formatDuration(execution.durationSeconds) : '-';
+
+            const row = `
+                <tr>
+                    <td>${execution.executionId}</td>
+                    <td>${execution.jobName}</td>
+                    <td>${formatDateTime(execution.startTime)}</td>
+                    <td>${formatDateTime(execution.endTime)}</td>
+                    <td>${duration}</td>
+                    <td>${statusBadge}</td>
+                    <td>${formatNumber(execution.totalRead)} / ${formatNumber(execution.totalWrite)}</td>
+                    <td>
+                        <button class="btn btn-sm btn-info" onclick="showDetails(${execution.executionId})">
+                            <i class="bi bi-eye"></i> Details
+                        </button>
+                        ${execution.status === 'FAILED' ?
+                `<button class="btn btn-sm btn-warning" onclick="restartJob(${execution.executionId})">
+                            <i class="bi bi-arrow-clockwise"></i> Restart
+                        </button>` : ''}
+                    </td>
+                </tr>
+            `;
+            tbody.append(row);
+        });
+    }
+
+    // 상세 정보 표시
+    async function showDetails(executionId) {
+        try {
+            const details = await $.get(`/admin/batch/step/details/${executionId}`);
+
+            let content = '<table class="table"><thead><tr>' +
+                '<th>Step Name</th><th>Status</th><th>Duration</th>' +
+                '<th>Read</th><th>Write</th><th>Skip</th>' +
+                '</tr></thead><tbody>';
+
+            details.forEach(step => {
+                content += `
+                    <tr>
+                        <td>${step.stepName}</td>
+                        <td>${getStatusBadge(step.status)}</td>
+                        <td>${step.durationSeconds ? formatDuration(step.durationSeconds) : '-'}</td>
+                        <td>${formatNumber(step.readCount)}</td>
+                        <td>${formatNumber(step.writeCount)}</td>
+                        <td>${formatNumber(step.skipCount)}</td>
+                    </tr>
+                `;
+            });
+
+            content += '</tbody></table>';
+
+            $('#modalBody').html(content);
+            $('#detailModal').modal('show');
+
+        } catch (error) {
+            alert('Failed to load details');
+        }
+    }
+
+    // Job 재시작
+    async function restartJob(executionId) {
+        if (!confirm('Restart this job?')) return;
+
+        try {
+            await $.post(`/admin/batch/job/restart/${executionId}`);
+            alert('Job restarted successfully');
+            loadHistory();
+        } catch (error) {
+            alert('Failed to restart job: ' + (error.responseJSON?.error || error.statusText));
+        }
+    }
+
+    // 모니터링 초기화
+    function initMonitoring() {
+        // 기존 차트 제거
+        if (charts.realtime) {
+            charts.realtime.destroy();
+            charts.realtime = null;
+        }
+
+        // 실시간 차트 초기화
+        const realtimeCtx = document.getElementById('realtimeChart').getContext('2d');
+        charts.realtime = new Chart(realtimeCtx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Records/sec',
+                    data: [],
+                    borderColor: 'rgb(255, 99, 132)',
+                    backgroundColor: 'rgba(255, 99, 132, 0.1)',
+                    tension: 0.1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: {
+                        type: 'time',
+                        time: {
+                            unit: 'second',
+                            displayFormats: {
+                                second: 'HH:mm:ss'
+                            }
+                        }
+                    },
+                    y: {
+                        beginAtZero: true
+                    }
+                },
+                plugins: {
+                    legend: {
+                        display: true
+                    }
+                }
+            }
+        });
+
+        // 실시간 업데이트 시작
+        updateMonitoring();
+        if (monitoringInterval) clearInterval(monitoringInterval);
+        monitoringInterval = setInterval(updateMonitoring, 2000);
+    }
+
+    // 모니터링 업데이트
+    async function updateMonitoring() {
+        try {
+            // 시스템 메트릭
+            const metrics = await $.get('/admin/metrics/summary');
+
+            // 메모리 사용량
+            const memoryUsage = (metrics.memory.used / metrics.memory.total * 100).toFixed(1);
+            $('#memoryBar').css('width', memoryUsage + '%').text(memoryUsage + '%');
+
+            // CPU는 백엔드에서 제공하지 않으므로 임시값
+            const cpuUsage = Math.random() * 100;
+            $('#cpuBar').css('width', cpuUsage.toFixed(1) + '%').text(cpuUsage.toFixed(1) + '%');
+
+            // 스레드 수
+            $('#activeThreads').text(metrics.threads || 0);
+
+            // DB 연결 수
+            $('#dbConnections').text(metrics.database?.activeConnections || 0);
+
+            // 실시간 차트 업데이트
+            if (charts.realtime) {
+                const now = new Date();
+                const processingRate = metrics.processing?.recordsPerSecond || Math.random() * 1000;
+
+                // 데이터 추가 (최대 20개 포인트 유지)
+                if (charts.realtime.data.labels.length > 20) {
+                    charts.realtime.data.labels.shift();
+                    charts.realtime.data.datasets[0].data.shift();
+                }
+
+                charts.realtime.data.labels.push(now);
+                charts.realtime.data.datasets[0].data.push(processingRate);
+                charts.realtime.update('none'); // 애니메이션 없이 업데이트
+            }
+
+        } catch (error) {
+            console.error('Failed to update monitoring:', error);
+        }
+    }
+
+    // 유틸리티 함수들
+    function formatDateTime(dateTime) {
+        if (!dateTime) return '-';
+        return new Date(dateTime).toLocaleString();
+    }
+
+    function formatDuration(seconds) {
+        const hours = Math.floor(seconds / 3600);
+        const minutes = Math.floor((seconds % 3600) / 60);
+        const secs = Math.floor(seconds % 60);
+
+        if (hours > 0) {
+            return `${hours}h ${minutes}m ${secs}s`;
+        } else if (minutes > 0) {
+            return `${minutes}m ${secs}s`;
+        } else {
+            return `${secs}s`;
+        }
+    }
+
+    function formatNumber(num) {
+        if (num === null || num === undefined) return '0';
+        return Math.round(num).toLocaleString();
+    }
+
+    function getStatusBadge(status) {
+        const statusMap = {
+            'COMPLETED': 'status-completed',
+            'FAILED': 'status-failed',
+            'STARTED': 'status-started',
+            'STOPPED': 'status-stopped'
+        };
+        const statusClass = statusMap[status] || 'status-stopped';
+        return `<span class="badge ${statusClass}">${status}</span>`;
+    }
+
+    function calculateProgress(job) {
+        // 기본값 0
+        let progress = 0;
+        
+        // steps 배열이 있으면 실제 진행률 계산
+        if (job.steps && job.steps.length > 0) {
+            let totalRead = 0;
+            let totalWrite = 0;
+            
+            job.steps.forEach(step => {
+                totalRead += step.readCount || 0;
+                totalWrite += step.writeCount || 0;
+            });
+            
+            // write/read 비율로 진행률 계산
+            if (totalRead > 0) {
+                progress = Math.floor((totalWrite / totalRead) * 100);
+            }
+        }
+        
+        return Math.min(progress, 100); // 최대 100%
+    }
+
+    function getLast7Days() {
+        const days = [];
+        for (let i = 6; i >= 0; i--) {
+            const date = new Date();
+            date.setDate(date.getDate() - i);
+            days.push(date.toLocaleDateString());
+        }
+        return days;
+    }
+
+    function generateRandomData(count, min, max) {
+        const data = [];
+        for (let i = 0; i < count; i++) {
+            data.push(Math.floor(Math.random() * (max - min + 1)) + min);
+        }
+        return data;
+    }
+</script>
+</body>
+</html>

@@ -1,0 +1,1616 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>비정상 궤적 모니터링</title>
+    <link href="/libs/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="/libs/css/maplibre-gl.css">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #f5f5f5;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+        }
+        
+        #mainContainer {
+            width: 100%;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .header-panel {
+            background: white;
+            padding: 15px 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            flex-shrink: 0;
+        }
+        
+        .main-content {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }
+        
+        .left-panel {
+            width: 450px;
+            background: white;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 2px 0 4px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        
+        .filter-section {
+            padding: 20px;
+            border-bottom: 1px solid #e0e0e0;
+            flex-shrink: 0;
+        }
+        
+        .vessel-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px;
+        }
+        
+        .custom-detection-panel {
+            padding: 20px;
+            border-bottom: 2px solid #e0e0e0;
+            background: #f0f8ff;
+            flex-shrink: 0;
+        }
+        
+        .action-buttons {
+            padding: 15px;
+            border-bottom: 1px solid #e0e0e0;
+            flex-shrink: 0;
+            display: flex;
+            gap: 10px;
+        }
+        
+        .track-checkbox {
+            margin-right: 8px;
+        }
+        
+        .vessel-group {
+            margin-bottom: 15px;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        
+        .vessel-header {
+            background: #f8f9fa;
+            padding: 12px 15px;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: background 0.2s;
+        }
+        
+        .vessel-header:hover {
+            background: #e9ecef;
+        }
+        
+        .vessel-header.active {
+            background: #007bff;
+            color: white;
+        }
+        
+        .vessel-info {
+            flex: 1;
+        }
+        
+        .vessel-id {
+            font-weight: 600;
+            font-size: 0.95em;
+        }
+        
+        .vessel-stats {
+            font-size: 0.85em;
+            color: #6c757d;
+            margin-top: 2px;
+        }
+        
+        .vessel-header.active .vessel-stats {
+            color: rgba(255, 255, 255, 0.9);
+        }
+        
+        .vessel-count {
+            background: #dc3545;
+            color: white;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.85em;
+            font-weight: 600;
+        }
+        
+        .vessel-tracks {
+            max-height: 200px;
+            overflow-y: auto;
+            background: #f8f9fa;
+            display: none;
+        }
+        
+        .track-item {
+            padding: 10px 15px;
+            border-bottom: 1px solid #e0e0e0;
+            cursor: pointer;
+            transition: background 0.2s;
+            font-size: 0.9em;
+            display: flex;
+            align-items: center;
+        }
+        
+        .track-item:hover {
+            background: #e9ecef;
+        }
+        
+        .track-item.selected {
+            background: #cfe2ff;
+            border-left: 4px solid #007bff;
+            font-weight: 500;
+        }
+        
+        .right-panel {
+            flex: 1;
+            position: relative;
+        }
+        
+        #map {
+            width: 100%;
+            height: 100%;
+        }
+        
+        .stat-cards {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            z-index: 1000;
+            display: flex;
+            gap: 15px;
+        }
+        
+        .stat-card {
+            background: white;
+            padding: 15px 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            text-align: center;
+            min-width: 140px;
+        }
+        
+        .stat-number {
+            font-size: 1.8em;
+            font-weight: bold;
+            color: #007bff;
+            margin: 5px 0;
+        }
+        
+        .stat-label {
+            color: #6c757d;
+            font-size: 0.85em;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .abnormal-type-badge {
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 0.75em;
+            color: white;
+            display: inline-block;
+        }
+        
+        .type-extreme_speed {
+            background-color: #e74c3c;
+        }
+        
+        .type-extreme_distance {
+            background-color: #f39c12;
+        }
+        
+        .type-extreme_transition {
+            background-color: #9b59b6;
+        }
+        
+        .type-extreme_avg_speed_5min {
+            background-color: #3498db;
+        }
+        
+        .type-impossible_transition {
+            background-color: #c0392b;
+        }
+        
+        /* 범례 스타일 */
+        .legend-panel {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            z-index: 1000;
+            min-width: 200px;
+        }
+        
+        .legend-title {
+            font-weight: 600;
+            margin-bottom: 10px;
+            font-size: 0.9em;
+            color: #333;
+        }
+        
+        .legend-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 6px;
+            font-size: 0.85em;
+        }
+        
+        .legend-color {
+            width: 16px;
+            height: 16px;
+            border-radius: 3px;
+            margin-right: 8px;
+            flex-shrink: 0;
+        }
+        
+        .legend-label {
+            flex: 1;
+        }
+        
+        .legend-count {
+            color: #6c757d;
+            font-size: 0.8em;
+            margin-left: 8px;
+        }
+
+        .tooltip-popup {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.9);
+            color: white;
+            padding: 10px 15px;
+            border-radius: 6px;
+            font-size: 0.85em;
+            pointer-events: none;
+            z-index: 9999;
+            max-width: 300px;
+            line-height: 1.4;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        }
+        
+        .tooltip-popup .tooltip-header {
+            font-weight: 600;
+            margin-bottom: 5px;
+            color: #ffc107;
+        }
+        
+        .tooltip-popup .tooltip-row {
+            margin: 2px 0;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 50px;
+            color: #6c757d;
+        }
+        
+        .no-data {
+            text-align: center;
+            padding: 50px;
+            color: #6c757d;
+        }
+        
+        /* 스크롤바 스타일 */
+        .vessel-list::-webkit-scrollbar,
+        .vessel-tracks::-webkit-scrollbar {
+            width: 6px;
+        }
+        
+        .vessel-list::-webkit-scrollbar-track,
+        .vessel-tracks::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+        
+        .vessel-list::-webkit-scrollbar-thumb,
+        .vessel-tracks::-webkit-scrollbar-thumb {
+            background: #888;
+            border-radius: 3px;
+        }
+        
+        .vessel-list::-webkit-scrollbar-thumb:hover,
+        .vessel-tracks::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+    </style>
+</head>
+<body>
+    <div id="mainContainer">
+        <!-- 상단 헤더 -->
+        <div class="header-panel">
+            <h4 class="mb-0">비정상 궤적 모니터링</h4>
+        </div>
+        
+        <div class="main-content">
+            <!-- 왼쪽 패널: 필터 및 선박 목록 -->
+            <div class="left-panel">
+                <!-- 필터 섹션 -->
+                <div class="filter-section">
+                    <div class="mb-3">
+                        <label class="form-label mb-2">조회 기간</label>
+                        <div class="row g-2">
+                            <div class="col-6">
+                                <label class="form-label small text-muted">시작일</label>
+                                <input type="date" class="form-control form-control-sm" id="startDateInput">
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label small text-muted">종료일</label>
+                                <input type="date" class="form-control form-control-sm" id="endDateInput">
+                            </div>
+                        </div>
+                        <div class="mt-2">
+                            <div class="btn-group btn-group-sm w-100" role="group">
+                                <button type="button" class="btn btn-outline-secondary" onclick="setDateRange(1)">1일</button>
+                                <button type="button" class="btn btn-outline-secondary" onclick="setDateRange(3)">3일</button>
+                                <button type="button" class="btn btn-outline-secondary" onclick="setDateRange(7)">7일</button>
+                                <button type="button" class="btn btn-outline-secondary" onclick="setDateRange(30)">30일</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label mb-2">비정상 유형</label>
+                        <select class="form-select form-select-sm" id="typeSelect">
+                            <option value="">전체</option>
+                            <option value="extreme_speed">극단적 비정상 속도</option>
+                            <option value="extreme_distance">5분간 극단적 이동</option>
+                            <option value="extreme_transition">극단적 bucket 전환</option>
+                            <option value="extreme_avg_speed_5min">극단적 평균속도 (5분)</option>
+                            <option value="impossible_transition">물리적 불가능 전환</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label mb-2">선박 ID</label>
+                        <input type="text" class="form-control form-control-sm" id="vesselIdInput" 
+                               placeholder="예: 000001:123456789">
+                    </div>
+                    <button class="btn btn-primary btn-sm w-100" onclick="loadAbnormalTracks()">
+                        조회
+                    </button>
+                </div>
+                
+                <!-- 사용자 정의 검출 패널 -->
+                <div class="custom-detection-panel">
+                    <h6 class="mb-3">사용자 정의 비정상 궤적 검출</h6>
+                    <div class="text-end mb-2">
+                        <button class="btn btn-sm btn-outline-secondary" onclick="showAllTracks()" 
+                                id="backToAutoBtn" style="display: none;">
+                            <i class="bi bi-arrow-left"></i> 자동 검출 모드로
+                        </button>
+                    </div>
+                    <div class="row g-2">
+                        <div class="col-6">
+                            <label class="form-label">테이블</label>
+                            <select class="form-select form-select-sm" id="tableTypeSelect">
+                                <option value="hourly">Hourly</option>
+                                <option value="daily">Daily</option>
+                            </select>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label">기간</label>
+                            <select class="form-select form-select-sm" id="customPeriodSelect">
+                                <option value="1">최근 1일</option>
+                                <option value="3">최근 3일</option>
+                                <option value="7">최근 7일</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="row g-2 mt-2">
+                        <div class="col-6">
+                            <label class="form-label">최소 거리 (nm)</label>
+                            <input type="number" class="form-control form-control-sm" id="minDistanceInput" 
+                                   value="0" min="0" step="10">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label">최소 속도 (kts)</label>
+                            <input type="number" class="form-control form-control-sm" id="minSpeedInput" 
+                                   value="0" min="0" step="10">
+                        </div>
+                    </div>
+                    <button class="btn btn-success btn-sm w-100 mt-3" onclick="detectCustomAbnormalTracks()">
+                        <i class="bi bi-search"></i> 검출하기
+                    </button>
+                </div>
+                
+                <!-- 정렬 및 전체보기 옵션 -->
+                <div class="px-3 pb-2 border-bottom">
+                    <div class="d-flex gap-2 mb-2">
+                        <button class="btn btn-outline-secondary btn-sm flex-fill" onclick="showAllTracks()">
+                            전체 보기
+                        </button>
+                        <button class="btn btn-outline-secondary btn-sm flex-fill" onclick="clearSelection()">
+                            선택 해제
+                        </button>
+                    </div>
+                    <label class="form-label mb-2">정렬 기준</label>
+                    <select class="form-select form-select-sm" id="sortSelect" onchange="updateVesselList()">
+                        <option value="count">궤적 수 많은 순</option>
+                        <option value="distance">총거리 긴 순</option>
+                        <option value="speed">평균속도 빠른 순</option>
+                        <option value="recent">최근 검출 순</option>
+                    </select>
+                </div>
+                
+                <!-- 액션 버튼 -->
+                <div class="action-buttons" id="actionButtons" style="display: none;">
+                    <button class="btn btn-sm btn-outline-primary" onclick="selectAllTracks()">
+                        <i class="bi bi-check-square"></i> 전체 선택
+                    </button>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="deselectAllTracks()">
+                        <i class="bi bi-square"></i> 전체 해제
+                    </button>
+                    <button class="btn btn-sm btn-danger" onclick="moveSelectedToAbnormal()" id="moveToAbnormalBtn" disabled>
+                        <i class="bi bi-exclamation-triangle"></i> 비정상 이동 (<span id="selectedCount">0</span>)
+                    </button>
+                </div>
+                
+                <!-- 선박 목록 -->
+                <div class="vessel-list" id="vesselList">
+                    <div class="loading">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        <div class="mt-2">데이터를 불러오는 중...</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 오른쪽 패널: 지도 -->
+            <div class="right-panel">
+                <div id="map"></div>
+                
+                <!-- 통계 카드 -->
+                <div class="stat-cards">
+                    <div class="stat-card">
+                        <div class="stat-label">전체 비정상 궤적</div>
+                        <div class="stat-number" id="totalCount">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">영향받은 선박</div>
+                        <div class="stat-number" id="vesselCount">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">평균 이동거리</div>
+                        <div class="stat-number" id="avgDistance">0</div>
+                    </div>
+                </div>
+                
+                <!-- 범례 패널 -->
+                <div class="legend-panel" id="legendPanel">
+                    <div class="legend-title" id="legendTitle">비정상 유형별 현황</div>
+                    <div id="legendContent">
+                        <!-- 동적으로 생성됨 -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 툴팁 -->
+    <div class="tooltip-popup" id="tooltip" style="display: none;"></div>
+    
+    <script src="/libs/js/bootstrap.bundle.min.js"></script>
+    <script src="/libs/js/maplibre-gl.js"></script>
+    <script src="/libs/js/deck.gl.min.js"></script>
+    <script>
+        let map;
+        let deckOverlay;
+        let abnormalTracks = [];
+        let vesselGroups = new Map();
+        let selectedTracks = new Set();
+        let activeVesselId = null; // 현재 활성화된 선박 그룹
+        let selectedCheckboxTracks = new Set(); // 체크박스로 선택된 트랙
+        let customDetectedTracks = []; // 사용자 정의 검출 결과
+        let isCustomDetectionMode = false; // 사용자 정의 검출 모드
+        
+        // 성능 최적화를 위한 캐시
+        let parsedGeoJsonCache = new Map();
+        let currentLayers = null;
+        
+        // 지도 초기화
+        function initMap() {
+            map = new maplibregl.Map({
+                container: 'map',
+                style: {
+                    version: 8,
+                    sources: {
+                        'raster-tiles': {
+                            type: 'raster',
+                            tiles: ['/api/tiles/world/{z}/{x}/{y}.webp'],
+                            tileSize: 256,
+                            attribution: 'Local Tile Server'
+                        }
+                    },
+                    layers: [{
+                        id: 'simple-tiles',
+                        type: 'raster',
+                        source: 'raster-tiles',
+                        minzoom: 0,
+                        maxzoom: 22
+                    }]
+                },
+                center: [128, 35.5],
+                zoom: 6
+            });
+            
+            map.on('load', () => {
+                deckOverlay = new deck.MapboxOverlay({
+                    layers: []
+                });
+                
+                map.addControl(deckOverlay);
+                loadAbnormalTracks();
+            });
+            
+            map.addControl(new maplibregl.NavigationControl());
+        }
+        
+        // 날짜 범위 설정 (빠른 선택)
+        function setDateRange(days) {
+            const endDate = new Date();
+            const startDate = new Date();
+            startDate.setDate(endDate.getDate() - days);
+            
+            document.getElementById('startDateInput').value = startDate.toISOString().split('T')[0];
+            document.getElementById('endDateInput').value = endDate.toISOString().split('T')[0];
+        }
+        
+        // 비정상 궤적 데이터 로드
+        async function loadAbnormalTracks() {
+            let startDate = document.getElementById('startDateInput').value;
+            let endDate = document.getElementById('endDateInput').value;
+            
+            // 날짜가 선택되지 않은 경우 기본값 설정 (최근 24시간)
+            if (!startDate || !endDate) {
+                const end = new Date();
+                const start = new Date();
+                start.setDate(end.getDate() - 1);
+                startDate = start.toISOString().split('T')[0];
+                endDate = end.toISOString().split('T')[0];
+                document.getElementById('startDateInput').value = startDate;
+                document.getElementById('endDateInput').value = endDate;
+            }
+            
+            const type = document.getElementById('typeSelect').value;
+            const vesselId = document.getElementById('vesselIdInput').value;
+            
+            // 캐시 초기화
+            parsedGeoJsonCache.clear();
+            currentLayers = null;
+            
+            // 로딩 표시
+            document.getElementById('vesselList').innerHTML = `
+                <div class="loading">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <div class="mt-2">데이터를 불러오는 중...</div>
+                </div>
+            `;
+            
+            try {
+                // 날짜를 시간 차이(hours)로 변환
+                const start = new Date(startDate);
+                const end = new Date(endDate);
+                end.setHours(23, 59, 59); // 종료일의 끝까지 포함
+                
+                const now = new Date();
+                const hoursFromNow = Math.ceil((now - start) / (1000 * 60 * 60));
+                
+                const tracksResponse = await fetch(`/api/v1/abnormal-tracks/recent?hours=${hoursFromNow}`);
+                let allTracks = await tracksResponse.json();
+                
+                // 선택한 날짜 범위로 필터링
+                abnormalTracks = allTracks.filter(track => {
+                    const trackDate = new Date(track.detectedAt);
+                    return trackDate >= start && trackDate <= end;
+                });
+                
+                // 필터링
+                if (type) {
+                    abnormalTracks = abnormalTracks.filter(t => t.abnormalType === type);
+                }
+                if (vesselId) {
+                    abnormalTracks = abnormalTracks.filter(t => t.vesselId.includes(vesselId));
+                }
+                
+                groupTracksByVessel(abnormalTracks);
+                updateStatistics(); // 인자 없이 호출
+                updateVesselList();
+                updateMap();
+                updateLegend();
+                
+            } catch (error) {
+                console.error('Error loading abnormal tracks:', error);
+                document.getElementById('vesselList').innerHTML = `
+                    <div class="no-data">
+                        데이터 로드 중 오류가 발생했습니다.
+                    </div>
+                    ${isCustomDetectionMode ? `
+                        <input type="checkbox" class="track-checkbox" 
+                               data-vessel-id="${vesselId}" 
+                               onchange="updateCheckboxSelection()">
+                    ` : ''}
+                `;
+            }
+        }
+        
+        // 선박별로 궤적 그룹화
+        function groupTracksByVessel(tracks) {
+            vesselGroups.clear();
+            
+            tracks.forEach(track => {
+                const vesselId = track.vesselId;
+                if (!vesselGroups.has(vesselId)) {
+                    vesselGroups.set(vesselId, []);
+                }
+                vesselGroups.get(vesselId).push(track);
+            });
+            
+            vesselGroups.forEach((tracks, vesselId) => {
+                tracks.sort((a, b) => new Date(b.detectedAt) - new Date(a.detectedAt));
+            });
+        }
+        
+        // 통계 업데이트 - 필터링된 데이터 기반
+        function updateStatistics() {
+            // 현재 화면에 표시된 필터링된 데이터 기반으로 집계
+            const uniqueVessels = new Set();
+            let totalDistance = 0;
+            
+            abnormalTracks.forEach(track => {
+                uniqueVessels.add(track.vesselId);
+                totalDistance += parseFloat(track.distanceNm) || 0;
+            });
+            
+            document.getElementById('totalCount').textContent = abnormalTracks.length;
+            document.getElementById('vesselCount').textContent = uniqueVessels.size;
+            
+            if (abnormalTracks.length > 0) {
+                const avgDist = (totalDistance / abnormalTracks.length).toFixed(1);
+                document.getElementById('avgDistance').textContent = avgDist + ' nm';
+            } else {
+                document.getElementById('avgDistance').textContent = '0 nm';
+            }
+        }
+        
+        // 선박 목록 업데이트
+        function updateVesselList() {
+            const vesselListEl = document.getElementById('vesselList');
+            const sortBy = document.getElementById('sortSelect').value;
+            
+            if (vesselGroups.size === 0) {
+                vesselListEl.innerHTML = `
+                    <div class="no-data">
+                        검출된 비정상 궤적이 없습니다.
+                    </div>
+                `;
+                return;
+            }
+            
+            const vesselData = Array.from(vesselGroups.entries()).map(([vesselId, tracks]) => {
+                const totalDistance = tracks.reduce((sum, t) => sum + (parseFloat(t.distanceNm) || 0), 0);
+                const totalTime = tracks.reduce((sum, t) => {
+                    const dist = parseFloat(t.distanceNm) || 0;
+                    const speed = parseFloat(t.avgSpeed) || 1;
+                    return sum + (dist / speed);
+                }, 0);
+                const avgSpeed = totalTime > 0 ? totalDistance / totalTime : 0;
+                const latestTime = new Date(tracks[0].detectedAt);
+                
+                return {
+                    vesselId,
+                    tracks,
+                    totalDistance,
+                    avgSpeed,
+                    latestTime,
+                    count: tracks.length
+                };
+            });
+            
+            // 정렬
+            switch (sortBy) {
+                case 'count':
+                    vesselData.sort((a, b) => b.count - a.count);
+                    break;
+                case 'distance':
+                    vesselData.sort((a, b) => b.totalDistance - a.totalDistance);
+                    break;
+                case 'speed':
+                    vesselData.sort((a, b) => b.avgSpeed - a.avgSpeed);
+                    break;
+                case 'recent':
+                    vesselData.sort((a, b) => b.latestTime - a.latestTime);
+                    break;
+            }
+            
+            vesselListEl.innerHTML = vesselData.map(({vesselId, tracks, totalDistance, avgSpeed}) => {
+                const typeCounts = {};
+                tracks.forEach(track => {
+                    const type = track.abnormalType;
+                    typeCounts[type] = (typeCounts[type] || 0) + 1;
+                });
+                
+                const topTypes = Object.entries(typeCounts)
+                    .sort((a, b) => b[1] - a[1])
+                    .slice(0, 2)
+                    .map(([type]) => `
+                        <span class="abnormal-type-badge type-${type} ms-1" style="font-size: 0.7em; padding: 2px 6px;">
+                            ${getTypeLabel(type)}
+                        </span>
+                    `).join('');
+                
+                return `
+                    <div class="vessel-group" data-vessel-id="${vesselId}">
+                        <div class="vessel-header" onclick="toggleVessel('${vesselId}')">
+                            <div class="vessel-info">
+                                <div class="vessel-id">
+                                    ${vesselId}
+                                    ${topTypes}
+                                </div>
+                                <div class="vessel-stats">
+                                    총 거리: ${totalDistance.toFixed(1)}nm | 평균 속도: ${avgSpeed.toFixed(1)}kts
+                                </div>
+                            </div>
+                            <span class="vessel-count">${tracks.length}</span>
+                        </div>
+                        <div class="vessel-tracks" id="tracks-${vesselId.replace(/:/g, '-')}">
+                            ${tracks.map((track, idx) => `
+                                <div class="track-item" data-track-id="${track.id}" 
+                                     ${!isCustomDetectionMode ? `onclick="selectTrack('${track.id}', '${vesselId}')"`  : ''}>
+                                    ${isCustomDetectionMode ? `
+                                        <input type="checkbox" class="track-checkbox" 
+                                               data-track-id="${track.id}" 
+                                               data-vessel-id="${vesselId}"
+                                               onchange="updateCheckboxSelection()"
+                                               onclick="event.stopPropagation()">
+                                    ` : ''}
+                                    <div style="display: flex; justify-content: space-between; align-items: start; flex: 1;">
+                                        <div>
+                                            <div style="font-weight: 500;">
+                                                ${new Date(track.timeBucket).toLocaleString('ko-KR')}
+                                            </div>
+                                            <div style="font-size: 0.85em; color: #6c757d;">
+                                                ${track.distanceNm ? track.distanceNm.toFixed(2) + 'nm' : '-'} | 
+                                                ${track.avgSpeed ? track.avgSpeed.toFixed(1) + 'kts' : '-'}
+                                            </div>
+                                        </div>
+                                        <span class="abnormal-type-badge type-${track.abnormalType}">
+                                            ${getTypeLabel(track.abnormalType)}
+                                        </span>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+        
+        // CSS 선택자용 ID 이스케이프
+        function escapeSelector(id) {
+            return id.replace(/:/g, '-');
+        }
+        
+        // 선박 토글
+        function toggleVessel(vesselId) {
+            const vesselGroup = document.querySelector(`[data-vessel-id="${vesselId}"]`);
+            const header = vesselGroup.querySelector('.vessel-header');
+            const tracksEl = document.getElementById(`tracks-${escapeSelector(vesselId)}`);
+            
+            if (tracksEl.style.display === 'block' && activeVesselId === vesselId) {
+                // 이미 열려있고 활성화된 상태면 닫기
+                tracksEl.style.display = 'none';
+                header.classList.remove('active');
+                activeVesselId = null;
+                selectedTracks.clear();
+                updateMap();
+            } else {
+                // 다른 모든 선박 접기
+                document.querySelectorAll('.vessel-tracks').forEach(el => {
+                    el.style.display = 'none';
+                });
+                document.querySelectorAll('.vessel-header').forEach(el => {
+                    el.classList.remove('active');
+                });
+                
+                // 선택한 선박 열기
+                tracksEl.style.display = 'block';
+                header.classList.add('active');
+                activeVesselId = vesselId;
+                
+                showVesselTracks(vesselId);
+            }
+        }
+        
+        // 선박의 모든 궤적 표시
+        function showVesselTracks(vesselId) {
+            selectedTracks.clear();
+            const tracks = vesselGroups.get(vesselId) || [];
+            
+            // 기본적으로 첫 번째 트랙을 선택
+            if (tracks.length > 0) {
+                selectedTracks.add(String(tracks[0].id));
+                
+                // UI 업데이트 - 모든 track-item의 선택 상태 업데이트
+                const tracksContainer = document.getElementById(`tracks-${escapeSelector(vesselId)}`);
+                if (tracksContainer) {
+                    tracksContainer.querySelectorAll('.track-item').forEach(el => {
+                        el.classList.toggle('selected', selectedTracks.has(el.getAttribute('data-track-id')));
+                    });
+                }
+            }
+            
+            updateMap();
+            
+            if (tracks.length > 0) {
+                fitMapToTracks(tracks);
+            }
+        }
+        
+        // 개별 궤적 선택
+        function selectTrack(trackId, vesselId) {
+            event.stopPropagation();
+            
+            // trackId를 문자열로 변환
+            trackId = String(trackId);
+            
+            // 현재 활성 그룹이 아니면 먼저 활성화
+            if (activeVesselId !== vesselId) {
+                // 선박 그룹 활성화
+                document.querySelectorAll('.vessel-header').forEach(el => el.classList.remove('active'));
+                document.querySelectorAll('.vessel-tracks').forEach(el => el.style.display = 'none');
+                
+                const vesselGroup = document.querySelector(`[data-vessel-id="${vesselId}"]`);
+                if (vesselGroup) {
+                    const header = vesselGroup.querySelector('.vessel-header');
+                    const tracksEl = vesselGroup.querySelector('.vessel-tracks');
+                    
+                    header.classList.add('active');
+                    tracksEl.style.display = 'block';
+                    activeVesselId = vesselId;
+                }
+            }
+            
+            // 선택 상태 토글
+            if (selectedTracks.has(trackId)) {
+                selectedTracks.delete(trackId);
+            } else {
+                selectedTracks.clear(); // 기존 선택 해제
+                selectedTracks.add(trackId);
+            }
+            
+            // UI 업데이트 (해당 선박 그룹 내에서만)
+            const tracksContainer = document.getElementById(`tracks-${escapeSelector(vesselId)}`);
+            if (tracksContainer) {
+                tracksContainer.querySelectorAll('.track-item').forEach(el => {
+                    el.classList.toggle('selected', selectedTracks.has(el.getAttribute('data-track-id')));
+                });
+            }
+            
+            updateMap();
+            
+            // 선택된 궤적으로 지도 중심 조정
+            const selectedTrack = abnormalTracks.find(t => String(t.id) === trackId);
+            if (selectedTrack) {
+                fitMapToTracks([selectedTrack]);
+            }
+        }
+        
+        // 지도에서 궤적 클릭 시 선박 그룹 선택
+        function selectTrackFromMap(trackId) {
+            const track = abnormalTracks.find(t => String(t.id) === String(trackId));
+            if (!track) return;
+            
+            const vesselId = track.vesselId;
+            
+            // UI 업데이트 최적화
+            requestAnimationFrame(() => {
+                // 해당 선박 그룹이 이미 활성화되어 있는 경우
+                if (activeVesselId === vesselId) {
+                    // 트랙 선택만 변경
+                    selectedTracks.clear();
+                    selectedTracks.add(String(trackId));
+                    
+                    // 해당 그룹 내 트랙 아이템 UI 업데이트
+                    const tracksContainer = document.getElementById(`tracks-${escapeSelector(vesselId)}`);
+                    if (tracksContainer) {
+                        tracksContainer.querySelectorAll('.track-item').forEach(el => {
+                            el.classList.toggle('selected', String(el.getAttribute('data-track-id')) === String(trackId));
+                        });
+                        
+                        // 선택된 아이템을 최상단으로 스크롤
+                        const selectedTrackEl = tracksContainer.querySelector(`[data-track-id="${trackId}"]`);
+                        if (selectedTrackEl) {
+                            tracksContainer.scrollTop = selectedTrackEl.offsetTop - tracksContainer.offsetTop;
+                            
+                            // 하이라이트 효과
+                            selectedTrackEl.style.transition = 'background-color 0.3s';
+                            selectedTrackEl.style.backgroundColor = '#b8d4ff';
+                            setTimeout(() => {
+                                selectedTrackEl.style.backgroundColor = '';
+                            }, 1000);
+                        }
+                    }
+                } else {
+                    // 새로운 선박 그룹 활성화
+                    // 기존 선택 해제
+                    document.querySelectorAll('.vessel-header.active').forEach(el => el.classList.remove('active'));
+                    document.querySelectorAll('.vessel-tracks[style*="display: block"]').forEach(el => el.style.display = 'none');
+                    
+                    // 새로운 선택
+                    const vesselGroup = document.querySelector(`[data-vessel-id="${vesselId}"]`);
+                    if (vesselGroup) {
+                        const header = vesselGroup.querySelector('.vessel-header');
+                        const tracksEl = vesselGroup.querySelector('.vessel-tracks');
+                        
+                        header.classList.add('active');
+                        tracksEl.style.display = 'block';
+                        activeVesselId = vesselId;
+                        
+                        // 궤적 선택
+                        selectedTracks.clear();
+                        selectedTracks.add(String(trackId));
+                        
+                        tracksEl.querySelectorAll('.track-item').forEach(el => {
+                            el.classList.toggle('selected', String(el.getAttribute('data-track-id')) === String(trackId));
+                        });
+                        
+                        // 선택된 트랙 아이템으로 스크롤
+                        setTimeout(() => {
+                            const selectedTrackEl = tracksEl.querySelector(`[data-track-id="${trackId}"]`);
+                            if (selectedTrackEl) {
+                                // 그룹 먼저 보이게
+                                vesselGroup.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                // 트랙 리스트 내에서 선택된 아이템을 최상단에 위치
+                                setTimeout(() => {
+                                    tracksEl.scrollTop = selectedTrackEl.offsetTop - tracksEl.offsetTop;
+                                    
+                                    // 하이라이트 효과
+                                    selectedTrackEl.style.transition = 'background-color 0.3s';
+                                    selectedTrackEl.style.backgroundColor = '#b8d4ff';
+                                    setTimeout(() => {
+                                        selectedTrackEl.style.backgroundColor = '';
+                                    }, 1000);
+                                }, 400);
+                            }
+                        }, 100);
+                    }
+                }
+                
+                updateMap();
+            });
+        }
+        
+        // 전체 보기
+        function showAllTracks() {
+            activeVesselId = null;
+            selectedTracks.clear();
+            isCustomDetectionMode = false;
+            
+            // 필터 섹션 다시 표시
+            document.querySelector('.filter-section').style.display = 'block';
+            document.getElementById('actionButtons').style.display = 'none';
+            document.getElementById('backToAutoBtn').style.display = 'none';
+            
+            // UI 초기화
+            document.querySelectorAll('.vessel-header').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.vessel-tracks').forEach(el => el.style.display = 'none');
+            document.querySelectorAll('.track-item').forEach(el => el.classList.remove('selected'));
+            
+            loadAbnormalTracks();
+        }
+        
+        // 선택 해제
+        function clearSelection() {
+            selectedTracks.clear();
+            document.querySelectorAll('.track-item').forEach(el => el.classList.remove('selected'));
+            updateMap();
+        }
+        
+        // 지도를 궤적에 맞게 조정
+        function fitMapToTracks(tracks) {
+            const bounds = new maplibregl.LngLatBounds();
+            
+            tracks.forEach(track => {
+                if (track.trackGeoJson) {
+                    try {
+                        const geojson = parsedGeoJsonCache.get(track.id) || JSON.parse(track.trackGeoJson);
+                        if (!parsedGeoJsonCache.has(track.id)) {
+                            parsedGeoJsonCache.set(track.id, geojson);
+                        }
+                        
+                        if (geojson.type === 'LineString') {
+                            geojson.coordinates.forEach(coord => {
+                                bounds.extend([coord[0], coord[1]]);
+                            });
+                        }
+                    } catch (e) {
+                        console.error('Failed to parse GeoJSON:', e);
+                    }
+                }
+            });
+            
+            if (!bounds.isEmpty()) {
+                map.fitBounds(bounds, { padding: 100 });
+            }
+        }
+        
+        // 지도 업데이트 - 최적화된 버전
+        function updateMap() {
+            if (!deckOverlay) return;
+            
+            const pathData = [];
+            const pointData = [];
+            
+            // 렌더링할 트랙 결정
+            let tracksToRender = [];
+            
+            if (activeVesselId) {
+                // 활성 선박 그룹이 있으면 해당 그룹의 모든 트랙 표시
+                tracksToRender = abnormalTracks.filter(t => t.vesselId === activeVesselId);
+            } else if (selectedTracks.size > 0) {
+                // 활성 그룹은 없지만 선택된 트랙이 있으면 선택된 것만
+                tracksToRender = abnormalTracks.filter(t => selectedTracks.has(String(t.id)));
+            } else {
+                // 둘 다 없으면 전체 표시
+                tracksToRender = abnormalTracks;
+            }
+            
+            tracksToRender.forEach(track => {
+                let geojson = parsedGeoJsonCache.get(track.id);
+                if (!geojson && track.trackGeoJson) {
+                    try {
+                        geojson = JSON.parse(track.trackGeoJson);
+                        parsedGeoJsonCache.set(track.id, geojson);
+                    } catch (e) {
+                        console.error('Failed to parse GeoJSON:', e);
+                        return;
+                    }
+                }
+                
+                if (geojson && geojson.type === 'LineString') {
+                    const isSelected = selectedTracks.has(String(track.id));
+                    const isInActiveGroup = activeVesselId && track.vesselId === activeVesselId;
+                    const color = getColorByType(track.abnormalType).slice(0, 3);
+                    
+                    // 색상 및 너비 결정
+                    let finalColor = color;
+                    let width = 3;
+                    let opacity = 150;
+                    
+                    if (isInActiveGroup) {
+                        // 활성 그룹의 트랙
+                        if (isSelected) {
+                            // 선택된 트랙은 강조
+                            width = 15;
+                            opacity = 255;
+                            finalColor = [255, 215, 0]; // 금색으로 강조
+                        } else {
+                            // 선택되지 않은 트랙은 약간 투명하게
+                            width = 4;
+                            opacity = 120;
+                        }
+                    } else if (selectedTracks.size > 0 && !isSelected) {
+                        // 선택된 트랙이 있지만 이 트랙은 선택되지 않음
+                        finalColor = [128, 128, 128];
+                        opacity = 60;
+                    }
+                    
+                    pathData.push({
+                        path: geojson.coordinates.map(coord => [coord[0], coord[1]]),
+                        color: finalColor,
+                        width: width,
+                        opacity: opacity,
+                        trackId: String(track.id),
+                        vesselId: track.vesselId,
+                        selected: isSelected,
+                        isInActiveGroup: isInActiveGroup
+                    });
+                    
+                    // 포인트는 선택된 트랙만 표시
+                    if (isSelected) {
+                        const timeBucket = new Date(track.timeBucket);
+                        geojson.coordinates.forEach((coord, idx) => {
+                            // 모든 포인트 표시
+                            pointData.push({
+                                position: [coord[0], coord[1]],
+                                vesselId: track.vesselId,
+                                trackId: track.id,
+                                time: new Date(timeBucket.getTime() + (coord[2] || 0) * 1000),
+                                index: idx,
+                                totalPoints: geojson.coordinates.length
+                            });
+                        });
+                    }
+                }
+            });
+            
+            // 데이터를 선택 상태에 따라 정렬 (선택된 것을 나중에 그림)
+            pathData.sort((a, b) => {
+                if (a.selected && !b.selected) return 1;
+                if (!a.selected && b.selected) return -1;
+                return 0;
+            });
+            
+            const layers = [
+                new deck.PathLayer({
+                    id: 'tracks',
+                    data: pathData,
+                    getPath: d => d.path,
+                    getColor: d => [...d.color, d.opacity],
+                    getWidth: d => d.width,
+                    widthMinPixels: 2,
+                    widthMaxPixels: 20,
+                    pickable: true,
+                    autoHighlight: true,
+                    highlightColor: [255, 255, 0, 200],
+                    onClick: ({object}) => {
+                        if (object && object.trackId) {
+                            selectTrackFromMap(String(object.trackId));
+                        }
+                    },
+                    updateTriggers: {
+                        getColor: [Array.from(selectedTracks), activeVesselId],
+                        getWidth: [Array.from(selectedTracks), activeVesselId]
+                    }
+                }),
+                new deck.ScatterplotLayer({
+                    id: 'points',
+                    data: pointData,
+                    getPosition: d => d.position,
+                    getFillColor: [255, 255, 255],
+                    getRadius: 8,
+                    radiusMinPixels: 4,
+                    radiusMaxPixels: 12,
+                    stroked: true,
+                    lineWidthMinPixels: 2,
+                    getLineColor: [0, 0, 0],
+                    pickable: true,
+                    onHover: ({object, x, y}) => {
+                        const tooltip = document.getElementById('tooltip');
+                        if (object) {
+                            tooltip.innerHTML = `
+                                <div class="tooltip-header">선박: ${object.vesselId}</div>
+                                <div class="tooltip-row">시간: ${object.time.toLocaleString('ko-KR')}</div>
+                                <div class="tooltip-row">포인트: ${object.index + 1} / ${object.totalPoints}</div>
+                            `;
+                            tooltip.style.left = (x + 10) + 'px';
+                            tooltip.style.top = (y - 10) + 'px';
+                            tooltip.style.display = 'block';
+                        } else {
+                            tooltip.style.display = 'none';
+                        }
+                    }
+                })
+            ];
+            
+            deckOverlay.setProps({ layers });
+        }
+        
+        // 유형별 색상
+        function getColorByType(type) {
+            const colors = {
+                'extreme_speed': [231, 76, 60, 200],
+                'extreme_distance': [243, 156, 18, 200],
+                'extreme_transition': [155, 89, 182, 200],
+                'extreme_avg_speed_5min': [52, 152, 219, 200],
+                'impossible_transition': [192, 57, 43, 200]
+            };
+            return colors[type] || [128, 128, 128, 200];
+        }
+        
+        // 유형 라벨
+        function getTypeLabel(type) {
+            const labels = {
+                'extreme_speed': '극단적 비정상 속도',
+                'extreme_distance': '5분간 극단적 이동',
+                'extreme_transition': '극단적 bucket 전환',
+                'extreme_avg_speed_5min': '극단적 평균속도 (5분)',
+                'impossible_transition': '물리적 불가능 전환'
+            };
+            return labels[type] || type;
+        }
+        
+        // 유형별 설명 (툴팁용)
+        function getTypeDescription(type) {
+            const descriptions = {
+                'extreme_speed': '평균속도가 선박 500knots, 항공기 800knots 초과',
+                'extreme_distance': '5분간 이동거리가 100nm 초과',
+                'extreme_transition': '버킷 전환 시 암시된 속도가 비정상적으로 높음',
+                'extreme_avg_speed_5min': '5분 평균속도가 1000knots 초과 (네트워크 오류)',
+                'impossible_transition': '시간대별 집계 시 물리적으로 불가능한 전환 (500knots 초과)'
+            };
+            return descriptions[type] || '비정상 궤적';
+        }
+        
+        // 범례 업데이트
+        function updateLegend() {
+            // 범례 제목에 조회 기간 표시
+            const legendTitle = document.getElementById('legendTitle');
+            if (legendTitle) {
+                legendTitle.innerHTML = `비정상 유형별 현황 <span style="font-size: 0.8em; color: #6c757d; font-weight: normal;">(${getPeriodLabel()})</span>`;
+            }
+            
+            const typeStats = new Map();
+            const vesselsByType = new Map();
+            
+            // 각 선박의 가장 최근 비정상 유형 결정
+            vesselGroups.forEach((tracks, vesselId) => {
+                if (tracks.length > 0) {
+                    // 가장 최근 트랙의 유형 (이미 시간순 정렬됨)
+                    const latestType = tracks[0].abnormalType;
+                    vesselsByType.set(vesselId, latestType);
+                }
+            });
+            
+            // 유형별 통계 집계
+            const allTypes = ['extreme_speed', 'extreme_distance', 'extreme_transition', 'extreme_avg_speed_5min', 'impossible_transition'];
+            allTypes.forEach(type => {
+                const trackCount = abnormalTracks.filter(t => t.abnormalType === type).length;
+                const vesselCount = Array.from(vesselsByType.values()).filter(t => t === type).length;
+                if (trackCount > 0 || vesselCount > 0) {
+                    typeStats.set(type, { tracks: trackCount, vessels: vesselCount });
+                }
+            });
+            
+            // 범례 HTML 생성
+            const legendContent = document.getElementById('legendContent');
+            if (typeStats.size === 0) {
+                legendContent.innerHTML = '<div style="color: #6c757d; font-size: 0.85em;">데이터 없음</div>';
+                return;
+            }
+            
+            const sortedTypes = Array.from(typeStats.entries())
+                .sort((a, b) => b[1].tracks - a[1].tracks);
+            
+            legendContent.innerHTML = sortedTypes.map(([type, stats]) => {
+                const color = getColorByType(type).slice(0, 3);
+                const description = getTypeDescription(type);
+                return `
+                    <div class="legend-item" title="${description}">
+                        <div style="display: flex; align-items: center; flex: 1;">
+                            <div class="legend-color" style="background-color: rgb(${color.join(',')})"></div>
+                            <div class="legend-label">${getTypeLabel(type)}</div>
+                        </div>
+                        <div class="legend-count">${stats.vessels}척 / ${stats.tracks}건</div>
+                    </div>
+                `;
+            }).join('');
+        }
+        
+        // 조회 기간 레이블 가져오기
+        function getPeriodLabel() {
+            const startDate = document.getElementById('startDateInput').value;
+            const endDate = document.getElementById('endDateInput').value;
+            
+            if (startDate && endDate) {
+                const start = new Date(startDate);
+                const end = new Date(endDate);
+                const diffDays = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
+                
+                if (startDate === endDate) {
+                    return start.toLocaleDateString('ko-KR');
+                } else {
+                    return `${start.toLocaleDateString('ko-KR')} ~ ${end.toLocaleDateString('ko-KR')} (${diffDays}일간)`;
+                }
+            }
+            return '전체';
+        }
+        
+        // 사용자 정의 검출
+        async function detectCustomAbnormalTracks() {
+            const tableType = document.getElementById('tableTypeSelect').value;
+            const days = parseInt(document.getElementById('customPeriodSelect').value);
+            const minDistance = parseFloat(document.getElementById('minDistanceInput').value) || 0;
+            const minSpeed = parseFloat(document.getElementById('minSpeedInput').value) || 0;
+            
+            const now = new Date();
+            const startTime = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+            
+            // ISO 문자열에서 밀리초 제거
+            const startTimeStr = startTime.toISOString().split('.')[0];
+            const endTimeStr = now.toISOString().split('.')[0];
+            
+            // 로딩 표시
+            document.getElementById('vesselList').innerHTML = `
+                <div class="loading">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <div class="mt-2">검출 중...</div>
+                </div>
+            `;
+            
+            try {
+                const response = await fetch('/api/v1/abnormal-tracks/detect', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        tableType: tableType,
+                        startTime: startTimeStr,
+                        endTime: endTimeStr,
+                        minDistance: minDistance || 0,
+                        minSpeed: minSpeed || 0
+                    })
+                });
+                
+                const tracks = await response.json();
+                
+                // 사용자 정의 검출 모드 활성화
+                isCustomDetectionMode = true;
+                customDetectedTracks = tracks;
+                abnormalTracks = tracks;
+                selectedCheckboxTracks.clear();
+                
+                // 액션 버튼 표시
+                document.getElementById('actionButtons').style.display = 'block';
+                
+                // 필터 섹션 숨기기 (기존 자동 검출 관련)
+                document.querySelector('.filter-section').style.display = 'none';
+                document.getElementById('backToAutoBtn').style.display = 'inline-block';
+                
+                groupTracksByVessel(tracks);
+                updateStatistics();
+                updateVesselList();
+                updateMap();
+                updateLegend();
+                
+                alert(`${tracks.length}개의 궤적이 검출되었습니다.`);
+                
+            } catch (error) {
+                console.error('Error detecting custom abnormal tracks:', error);
+                alert('검출 중 오류가 발생했습니다.');
+            }
+        }
+        
+        // 선택된 궤적을 비정상 테이블로 이동
+        async function moveSelectedToAbnormal() {
+            if (selectedCheckboxTracks.size === 0) {
+                alert('선택된 궤적이 없습니다.');
+                return;
+            }
+            
+            // 모달 표시
+            const modalHtml = `
+                <div class="modal fade" id="moveModal" tabindex="-1">
+                    <div class="modal-dialog">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title">비정상 궤적 이동</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="mb-3">
+                                    <label class="form-label">비정상 유형 선택</label>
+                                    <div class="d-grid gap-2">
+                                        <div class="form-check border rounded p-3">
+                                            <input class="form-check-input" type="radio" name="abnormalType" 
+                                                   id="type1" value="user_detected" checked>
+                                            <label class="form-check-label" for="type1">
+                                                <strong>사용자 검출</strong>
+                                                <div class="text-muted small">사용자가 수동으로 검출한 비정상 궤적</div>
+                                            </label>
+                                        </div>
+                                        <div class="form-check border rounded p-3">
+                                            <input class="form-check-input" type="radio" name="abnormalType" 
+                                                   id="type2" value="extreme_speed">
+                                            <label class="form-check-label" for="type2">
+                                                <strong>극단적 비정상 속도</strong>
+                                                <div class="text-muted small">선박 100knots, 항공기 300knots 초과</div>
+                                            </label>
+                                        </div>
+                                        <div class="form-check border rounded p-3">
+                                            <input class="form-check-input" type="radio" name="abnormalType" 
+                                                   id="type3" value="extreme_distance">
+                                            <label class="form-check-label" for="type3">
+                                                <strong>극단적 이동거리</strong>
+                                                <div class="text-muted small">시간 대비 비정상적으로 긴 이동거리</div>
+                                            </label>
+                                        </div>
+                                        <div class="form-check border rounded p-3">
+                                            <input class="form-check-input" type="radio" name="abnormalType" 
+                                                   id="type4" value="extreme_transition">
+                                            <label class="form-check-label" for="type4">
+                                                <strong>극단적 bucket 전환</strong>
+                                                <div class="text-muted small">시간 구간 전환 시 비정상적 위치 변화</div>
+                                            </label>
+                                        </div>
+                                        <div class="form-check border rounded p-3">
+                                            <input class="form-check-input" type="radio" name="abnormalType" 
+                                                   id="type5" value="impossible_transition">
+                                            <label class="form-check-label" for="type5">
+                                                <strong>물리적 불가능 전환</strong>
+                                                <div class="text-muted small">물리적으로 불가능한 속도로 위치 변경</div>
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">비정상 판단 이유</label>
+                                    <textarea class="form-control" id="abnormalReasonInput" rows="3" 
+                                              placeholder="상세한 이유를 입력하세요...">사용자가 수동으로 검출</textarea>
+                                </div>
+                                <div class="alert alert-warning">
+                                    <i class="bi bi-exclamation-triangle"></i>
+                                    ${selectedCheckboxTracks.size}개의 궤적이 비정상 테이블로 이동되며,
+                                    원본 테이블에서 삭제됩니다.
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">취소</button>
+                                <button type="button" class="btn btn-danger" onclick="confirmMoveToAbnormal()">
+                                    <i class="bi bi-exclamation-triangle"></i> 이동
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            // 기존 모달 제거
+            const existingModal = document.getElementById('moveModal');
+            if (existingModal) {
+                existingModal.remove();
+            }
+            
+            // 모달 추가 및 표시
+            document.body.insertAdjacentHTML('beforeend', modalHtml);
+            const modal = new bootstrap.Modal(document.getElementById('moveModal'));
+            modal.show();
+        }
+        
+        // 비정상 이동 확인
+        async function confirmMoveToAbnormal() {
+            const abnormalType = document.querySelector('input[name="abnormalType"]:checked').value;
+            const reason = document.getElementById('abnormalReasonInput').value.trim();
+            
+            if (!reason) {
+                alert('비정상 판단 이유를 입력해주세요.');
+                return;
+            }
+            
+            const tableType = document.getElementById('tableTypeSelect').value;
+            
+            // 선택된 트랙 정보 수집
+            const tracks = [];
+            selectedCheckboxTracks.forEach(trackId => {
+                const track = customDetectedTracks.find(t => String(t.id) === String(trackId));
+                if (track) {
+                    // timestamp에 초 추가
+                    const timeBucketStr = track.timeBucket.includes(':') && track.timeBucket.split(':').length === 2 
+                        ? track.timeBucket + ':00' 
+                        : track.timeBucket;
+                    
+                    tracks.push({
+                        sigSrcCd: track.sigSrcCd,
+                        targetId: track.targetId,
+                        timeBucket: timeBucketStr
+                    });
+                }
+            });
+            
+            try {
+                const response = await fetch('/api/v1/abnormal-tracks/move-to-abnormal', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        tableType: tableType,
+                        tracks: tracks,
+                        abnormalType: abnormalType,
+                        reason: reason
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    // 모달 닫기
+                    bootstrap.Modal.getInstance(document.getElementById('moveModal')).hide();
+                    alert(result.message);
+                    // 화면 새로고침
+                    detectCustomAbnormalTracks();
+                } else {
+                    alert('이동 중 오류가 발생했습니다.');
+                }
+                
+            } catch (error) {
+                console.error('Error moving tracks to abnormal:', error);
+                alert('이동 중 오류가 발생했습니다.');
+            }
+        }
+        
+        // 전체 선택
+        function selectAllTracks() {
+            document.querySelectorAll('.track-checkbox').forEach(checkbox => {
+                checkbox.checked = true;
+                const trackId = checkbox.getAttribute('data-track-id');
+                if (trackId) {
+                    selectedCheckboxTracks.add(trackId);
+                }
+            });
+            updateCheckboxSelection();
+        }
+        
+        // 전체 해제
+        function deselectAllTracks() {
+            document.querySelectorAll('.track-checkbox').forEach(checkbox => {
+                checkbox.checked = false;
+            });
+            selectedCheckboxTracks.clear();
+            updateCheckboxSelection();
+        }
+        
+        // 체크박스 선택 상태 업데이트
+        function updateCheckboxSelection() {
+            selectedCheckboxTracks.clear();
+            
+            document.querySelectorAll('.track-checkbox:checked').forEach(checkbox => {
+                const trackId = checkbox.getAttribute('data-track-id');
+                if (trackId) {
+                    selectedCheckboxTracks.add(trackId);
+                }
+            });
+            
+            // 선택 개수 표시
+            document.getElementById('selectedCount').textContent = selectedCheckboxTracks.size;
+            
+            // 비정상 이동 버튼 활성화/비활성화
+            document.getElementById('moveToAbnormalBtn').disabled = selectedCheckboxTracks.size === 0;
+            
+            // 지도 업데이트
+            updateMap();
+        }
+        
+        // 초기화
+        document.addEventListener('DOMContentLoaded', function() {
+            // 기본값 설정 (최근 1일)
+            setDateRange(1);
+            
+            initMap();
+            
+            document.getElementById('vesselIdInput').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    loadAbnormalTracks();
+                }
+            });
+            
+            // 날짜 변경 시 자동 조회
+            document.getElementById('startDateInput').addEventListener('change', function() {
+                if (document.getElementById('endDateInput').value) {
+                    loadAbnormalTracks();
+                }
+            });
+            
+            document.getElementById('endDateInput').addEventListener('change', function() {
+                if (document.getElementById('startDateInput').value) {
+                    loadAbnormalTracks();
+                }
+            });
+            
+            // 자동 새로고침 (5분마다)
+            setInterval(() => {
+                if (deckOverlay && !isCustomDetectionMode) {
+                    loadAbnormalTracks();
+                }
+            }, 300000);
+        });
+    </script>
+</body>
+</html>

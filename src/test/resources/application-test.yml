@@ -1,0 +1,44 @@
+# Test Configuration
+spring:
+  profiles:
+    active: test
+    
+  # H2 In-Memory Database for Tests
+  datasource:
+    url: jdbc:h2:mem:testdb;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+    
+  # Disable batch job auto-start in tests
+  batch:
+    job:
+      enabled: false
+    jdbc:
+      initialize-schema: always
+      
+  # SQL initialization
+  sql:
+    init:
+      mode: never
+      
+  # JPA settings for H2
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+    hibernate:
+      ddl-auto: create-drop
+
+# Disable schedulers in test
+scheduler:
+  enabled: false
+  
+# WebSocket test configuration  
+websocket:
+  enabled: false
+
+# Logging
+logging:
+  level:
+    root: WARN
+    gc.mda.signal_batch: INFO
+    org.springframework.batch: INFO

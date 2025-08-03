@@ -1,0 +1,725 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket 부하 테스트</title>
+    <!-- Local JS -->
+    <script src="/libs/js/sockjs.min.js"></script>
+    <script src="/libs/js/stomp.min.js"></script>
+    <script src="/libs/js/chart.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .control-panel {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        .stat-card {
+            background-color: #f8f9fa;
+            padding: 20px;
+            border-radius: 4px;
+            text-align: center;
+            border: 1px solid #e9ecef;
+        }
+        .stat-value {
+            font-size: 2em;
+            font-weight: bold;
+            color: #007bff;
+            margin: 10px 0;
+        }
+        .stat-label {
+            color: #6c757d;
+            font-size: 0.9em;
+        }
+        button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background-color 0.3s;
+        }
+        .btn-primary {
+            background-color: #007bff;
+            color: white;
+        }
+        .btn-primary:hover {
+            background-color: #0056b3;
+        }
+        .btn-danger {
+            background-color: #dc3545;
+            color: white;
+        }
+        .btn-danger:hover {
+            background-color: #c82333;
+        }
+        .btn-secondary {
+            background-color: #6c757d;
+            color: white;
+        }
+        input, select {
+            padding: 8px;
+            border: 1px solid #ced4da;
+            border-radius: 4px;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            font-size: 0.9em;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 30px;
+            background-color: #e9ecef;
+            border-radius: 4px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+        .progress-fill {
+            height: 100%;
+            background-color: #28a745;
+            width: 0%;
+            transition: width 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+        }
+        .log-container {
+            height: 200px;
+            overflow-y: auto;
+            border: 1px solid #dee2e6;
+            padding: 10px;
+            font-family: monospace;
+            font-size: 12px;
+            background-color: #f8f9fa;
+            margin-top: 20px;
+        }
+        .log-entry {
+            margin: 2px 0;
+            padding: 2px;
+        }
+        .log-error {
+            color: #dc3545;
+        }
+        .log-warning {
+            color: #ffc107;
+        }
+        .log-success {
+            color: #28a745;
+        }
+        .log-filter {
+            color: #6610f2;
+        }
+        .connection-status {
+            display: inline-block;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 0.9em;
+            font-weight: bold;
+        }
+        .status-connected {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .status-disconnected {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .control-group {
+            background-color: white;
+            padding: 10px;
+            border-radius: 4px;
+            border: 1px solid #e9ecef;
+        }
+        .chart-container {
+            position: relative;
+            height: 300px;
+            margin-top: 20px;
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+        h3 {
+            color: #495057;
+            margin-bottom: 15px;
+            border-bottom: 2px solid #007bff;
+            padding-bottom: 10px;
+        }
+        .filter-section {
+            background-color: #e9ecef;
+            padding: 15px;
+            border-radius: 4px;
+            margin-top: 15px;
+        }
+        .filter-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            margin: 5px 0;
+        }
+        .checkbox-group input {
+            width: auto;
+            margin-right: 5px;
+        }
+        .time-preset-buttons {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .time-preset-buttons button {
+            flex: 1;
+            padding: 5px 10px;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>WebSocket 궤적 스트리밍 부하 테스트</h1>
+        <div class="connection-status" id="connectionStatus">
+            연결 상태: <span id="statusText">연결 안됨</span>
+        </div>
+
+        <div class="control-panel">
+            <div class="control-group">
+                <label>WebSocket 서버 URL</label>
+                <input type="text" id="serverUrl" value="/ws-tracks" placeholder="예: ws://localhost:8090/ws-tracks">
+            </div>
+            <div class="control-group">
+                <label>동시 연결 수</label>
+                <input type="number" id="connectionCount" value="5" min="1" max="100">
+            </div>
+            <div class="control-group">
+                <label>시작 시간</label>
+                <input type="datetime-local" id="startTime">
+            </div>
+            <div class="control-group">
+                <label>종료 시간</label>
+                <input type="datetime-local" id="endTime">
+            </div>
+            <div class="control-group">
+                <label>청크 크기</label>
+                <input type="number" id="chunkSize" value="1000" min="100" max="10000">
+            </div>
+            <div class="control-group">
+                <label>단순화 임계값</label>
+                <input type="number" id="simplification" value="0.001" step="0.0001">
+            </div>
+        </div>
+
+        <!-- 시간 프리셋 버튼 -->
+        <div class="time-preset-buttons">
+            <button class="btn-secondary" onclick="setTimePreset(1)">최근 1시간</button>
+            <button class="btn-secondary" onclick="setTimePreset(6)">최근 6시간</button>
+            <button class="btn-secondary" onclick="setTimePreset(24)">최근 1일</button>
+            <button class="btn-secondary" onclick="setTimePreset(72)">최근 3일</button>
+            <button class="btn-secondary" onclick="setTimePreset(168)">최근 7일</button>
+        </div>
+
+        <!-- 거리/속도 필터 섹션 -->
+        <div class="filter-section">
+            <h4>거리/속도 필터 설정</h4>
+            <div class="filter-grid">
+                <div>
+                    <label>최소 이동거리 (nm)</label>
+                    <input type="number" id="minDistance" placeholder="제한 없음" step="0.1">
+                </div>
+                <div>
+                    <label>최대 이동거리 (nm)</label>
+                    <input type="number" id="maxDistance" placeholder="제한 없음" step="0.1">
+                </div>
+                <div>
+                    <label>최소 평균속도 (knots)</label>
+                    <input type="number" id="minSpeed" placeholder="제한 없음" step="0.1">
+                </div>
+                <div>
+                    <label>최대 평균속도 (knots)</label>
+                    <input type="number" id="maxSpeed" placeholder="제한 없음" step="0.1">
+                </div>
+            </div>
+            <div class="checkbox-group">
+                <input type="checkbox" id="includeInterBucket" checked>
+                <label for="includeInterBucket">Bucket 간 거리 포함</label>
+            </div>
+        </div>
+
+        <div style="margin: 20px 0; text-align: center;">
+            <button class="btn-primary" onclick="startTest()">테스트 시작</button>
+            <button class="btn-danger" onclick="stopTest()">테스트 중지</button>
+            <button class="btn-secondary" onclick="clearStats()">통계 초기화</button>
+        </div>
+
+        <h3>실시간 통계</h3>
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-label">활성 연결</div>
+                <div class="stat-value" id="activeConnections">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">수신된 궤적</div>
+                <div class="stat-value" id="totalTracks">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">필터된 선박</div>
+                <div class="stat-value" id="filteredVessels">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">평균 응답시간</div>
+                <div class="stat-value" id="avgResponseTime">0ms</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">초당 처리량</div>
+                <div class="stat-value" id="throughput">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">에러율</div>
+                <div class="stat-value" id="errorRate">0%</div>
+            </div>
+        </div>
+
+        <div class="progress-bar">
+            <div class="progress-fill" id="progressFill">0%</div>
+        </div>
+
+        <h3>응답 시간 차트</h3>
+        <div class="chart-container">
+            <canvas id="responseTimeChart"></canvas>
+        </div>
+
+        <h3>처리 로그</h3>
+        <div class="log-container" id="logContainer"></div>
+    </div>
+
+    <script>
+        // 전역 변수
+        let connections = [];
+        let isRunning = false;
+        let stats = {
+            totalTracks: 0,
+            filteredVessels: new Set(),
+            totalChunks: 0,
+            totalErrors: 0,
+            responseTimes: [],
+            startTime: null,
+            endTime: null
+        };
+        
+        let chart = null;
+        let chartData = {
+            labels: [],
+            datasets: [{
+                label: '응답 시간 (ms)',
+                data: [],
+                borderColor: 'rgb(75, 192, 192)',
+                tension: 0.1
+            }]
+        };
+
+        // 페이지 로드 시 초기화
+        window.onload = function() {
+            initChart();
+            setDefaultTimeRange();
+        };
+
+        // 차트 초기화
+        function initChart() {
+            const ctx = document.getElementById('responseTimeChart').getContext('2d');
+            chart = new Chart(ctx, {
+                type: 'line',
+                data: chartData,
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            title: {
+                                display: true,
+                                text: '응답 시간 (ms)'
+                            }
+                        },
+                        x: {
+                            title: {
+                                display: true,
+                                text: '시간'
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            display: true
+                        }
+                    }
+                }
+            });
+        }
+
+        // 기본 시간 범위 설정
+        function setDefaultTimeRange() {
+            const now = new Date();
+            const sixHoursAgo = new Date(now.getTime() - 6 * 60 * 60 * 1000);
+            
+            document.getElementById('startTime').value = formatDateTime(sixHoursAgo);
+            document.getElementById('endTime').value = formatDateTime(now);
+        }
+
+        // 시간 프리셋 설정
+        function setTimePreset(hours) {
+            const now = new Date();
+            const startTime = new Date(now.getTime() - hours * 60 * 60 * 1000);
+            
+            document.getElementById('startTime').value = formatDateTime(startTime);
+            document.getElementById('endTime').value = formatDateTime(now);
+            
+            addLog(`시간 범위 설정: 최근 ${hours}시간`, 'info');
+        }
+
+        // 날짜 포맷
+        function formatDateTime(date) {
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            const hours = String(date.getHours()).padStart(2, '0');
+            const minutes = String(date.getMinutes()).padStart(2, '0');
+            return `${year}-${month}-${day}T${hours}:${minutes}`;
+        }
+
+        // 테스트 시작
+        function startTest() {
+            if (isRunning) {
+                addLog('테스트가 이미 실행 중입니다.', 'warning');
+                return;
+            }
+
+            const connectionCount = parseInt(document.getElementById('connectionCount').value);
+            const startTime = document.getElementById('startTime').value;
+            const endTime = document.getElementById('endTime').value;
+
+            if (!startTime || !endTime) {
+                alert('시작 시간과 종료 시간을 입력해주세요.');
+                return;
+            }
+
+            isRunning = true;
+            stats.startTime = Date.now();
+            clearStats();
+            addLog(`부하 테스트 시작 - ${connectionCount}개 연결`, 'success');
+
+            // 연결 생성
+            for (let i = 0; i < connectionCount; i++) {
+                setTimeout(() => createConnection(i), i * 100); // 100ms 간격으로 연결
+            }
+        }
+
+        // 연결 생성
+        function createConnection(index) {
+            const socket = new SockJS(document.getElementById('serverUrl').value);
+            const stompClient = Stomp.over(socket);
+            
+            // 디버그 모드 비활성화
+            stompClient.debug = null;
+
+            const connection = {
+                id: index,
+                client: stompClient,
+                queryId: null,
+                startTime: null,
+                receivedChunks: 0,
+                receivedTracks: 0
+            };
+
+            stompClient.connect({}, (frame) => {
+                addLog(`연결 ${index} 성공`, 'success');
+                updateConnectionStatus();
+                
+                // 구독 설정
+                stompClient.subscribe('/user/queue/tracks/data', (message) => {
+                    handleTrackData(connection, JSON.parse(message.body));
+                });
+                
+                stompClient.subscribe('/user/queue/tracks/status', (message) => {
+                    handleStatusUpdate(connection, JSON.parse(message.body));
+                });
+                
+                stompClient.subscribe('/user/queue/errors', (message) => {
+                    handleError(connection, JSON.parse(message.body));
+                });
+                
+                // 쿼리 시작
+                startQuery(connection);
+                
+            }, (error) => {
+                addLog(`연결 ${index} 실패: ${error}`, 'error');
+                stats.totalErrors++;
+                updateStats();
+            });
+
+            connections.push(connection);
+        }
+
+        // 쿼리 시작
+        function startQuery(connection) {
+            connection.startTime = Date.now();
+            
+            const request = {
+                startTime: document.getElementById('startTime').value + ':00',
+                endTime: document.getElementById('endTime').value + ':00',
+                chunkSize: parseInt(document.getElementById('chunkSize').value),
+                simplificationTolerance: parseFloat(document.getElementById('simplification').value),
+                includeStats: true,
+                viewport: {
+                    minLon: 124.0,
+                    maxLon: 132.0,
+                    minLat: 33.0,
+                    maxLat: 38.0
+                }
+            };
+
+            // 거리/속도 필터 추가
+            const minDist = document.getElementById('minDistance').value;
+            const maxDist = document.getElementById('maxDistance').value;
+            const minSpeed = document.getElementById('minSpeed').value;
+            const maxSpeed = document.getElementById('maxSpeed').value;
+            
+            if (minDist) request.minTotalDistance = parseFloat(minDist);
+            if (maxDist) request.maxTotalDistance = parseFloat(maxDist);
+            if (minSpeed) request.minAvgSpeed = parseFloat(minSpeed);
+            if (maxSpeed) request.maxAvgSpeed = parseFloat(maxSpeed);
+            
+            request.includeInterBucketDistance = document.getElementById('includeInterBucket').checked;
+
+            connection.client.send('/app/tracks/query', {}, JSON.stringify(request));
+            addLog(`연결 ${connection.id}: 쿼리 시작`, 'info');
+        }
+
+        // 궤적 데이터 처리
+        function handleTrackData(connection, chunk) {
+            connection.queryId = chunk.queryId;
+            connection.receivedChunks++;
+            connection.receivedTracks += chunk.tracks.length;
+            
+            stats.totalTracks += chunk.tracks.length;
+            stats.totalChunks++;
+            
+            // 선박 ID 수집
+            chunk.tracks.forEach(track => {
+                stats.filteredVessels.add(`${track.sigSrcCd}_${track.targetId}`);
+            });
+            
+            // 응답 시간 계산
+            if (connection.startTime) {
+                const responseTime = Date.now() - connection.startTime;
+                stats.responseTimes.push(responseTime);
+                updateResponseTimeChart(responseTime);
+            }
+            
+            updateStats();
+            
+            if (chunk.isLastChunk) {
+                const duration = ((Date.now() - connection.startTime) / 1000).toFixed(2);
+                addLog(`연결 ${connection.id}: 완료 - ${connection.receivedTracks}개 궤적, ${duration}초`, 'success');
+            }
+        }
+
+        // 상태 업데이트 처리
+        function handleStatusUpdate(connection, status) {
+            if (status.status === 'FILTERING') {
+                addLog(`연결 ${connection.id}: 필터링 중...`, 'filter');
+            } else if (status.status === 'COMPLETED') {
+                addLog(`연결 ${connection.id}: 쿼리 완료`, 'success');
+            }
+            
+            // 진행률 업데이트
+            if (status.progressPercentage) {
+                updateProgress(status.progressPercentage);
+            }
+        }
+
+        // 에러 처리
+        function handleError(connection, error) {
+            addLog(`연결 ${connection.id} 에러: ${error.message}`, 'error');
+            stats.totalErrors++;
+            updateStats();
+        }
+
+        // 테스트 중지
+        function stopTest() {
+            if (!isRunning) return;
+            
+            isRunning = false;
+            stats.endTime = Date.now();
+            
+            connections.forEach((conn, index) => {
+                if (conn.client && conn.client.connected) {
+                    // 쿼리 취소
+                    if (conn.queryId) {
+                        conn.client.send(`/app/tracks/cancel/${conn.queryId}`, {}, '');
+                    }
+                    // 연결 해제
+                    conn.client.disconnect(() => {
+                        addLog(`연결 ${index} 해제`, 'info');
+                    });
+                }
+            });
+            
+            connections = [];
+            updateConnectionStatus();
+            
+            // 최종 통계
+            const duration = ((stats.endTime - stats.startTime) / 1000).toFixed(2);
+            addLog(`테스트 완료 - 총 ${stats.totalTracks}개 궤적, ${duration}초`, 'success');
+        }
+
+        // 통계 업데이트
+        function updateStats() {
+            document.getElementById('activeConnections').textContent = 
+                connections.filter(c => c.client && c.client.connected).length;
+            
+            document.getElementById('totalTracks').textContent = stats.totalTracks.toLocaleString();
+            document.getElementById('filteredVessels').textContent = stats.filteredVessels.size.toLocaleString();
+            
+            // 평균 응답 시간
+            if (stats.responseTimes.length > 0) {
+                const avgTime = stats.responseTimes.reduce((a, b) => a + b, 0) / stats.responseTimes.length;
+                document.getElementById('avgResponseTime').textContent = avgTime.toFixed(0) + 'ms';
+            }
+            
+            // 초당 처리량
+            if (stats.startTime) {
+                const elapsed = (Date.now() - stats.startTime) / 1000;
+                const throughput = elapsed > 0 ? (stats.totalTracks / elapsed).toFixed(1) : 0;
+                document.getElementById('throughput').textContent = throughput;
+            }
+            
+            // 에러율
+            const totalRequests = stats.totalChunks + stats.totalErrors;
+            const errorRate = totalRequests > 0 ? ((stats.totalErrors / totalRequests) * 100).toFixed(1) : 0;
+            document.getElementById('errorRate').textContent = errorRate + '%';
+        }
+
+        // 응답 시간 차트 업데이트
+        function updateResponseTimeChart(responseTime) {
+            const now = new Date().toLocaleTimeString();
+            
+            chartData.labels.push(now);
+            chartData.datasets[0].data.push(responseTime);
+            
+            // 최대 50개 데이터 포인트 유지
+            if (chartData.labels.length > 50) {
+                chartData.labels.shift();
+                chartData.datasets[0].data.shift();
+            }
+            
+            chart.update();
+        }
+
+        // 진행률 업데이트
+        function updateProgress(percentage) {
+            const progressFill = document.getElementById('progressFill');
+            progressFill.style.width = percentage + '%';
+            progressFill.textContent = Math.round(percentage) + '%';
+        }
+
+        // 연결 상태 업데이트
+        function updateConnectionStatus() {
+            const activeCount = connections.filter(c => c.client && c.client.connected).length;
+            const statusEl = document.getElementById('connectionStatus');
+            const statusText = document.getElementById('statusText');
+            
+            if (activeCount > 0) {
+                statusEl.className = 'connection-status status-connected';
+                statusText.textContent = `${activeCount}개 연결됨`;
+            } else {
+                statusEl.className = 'connection-status status-disconnected';
+                statusText.textContent = '연결 안됨';
+            }
+        }
+
+        // 통계 초기화
+        function clearStats() {
+            stats = {
+                totalTracks: 0,
+                filteredVessels: new Set(),
+                totalChunks: 0,
+                totalErrors: 0,
+                responseTimes: [],
+                startTime: null,
+                endTime: null
+            };
+            
+            updateStats();
+            updateProgress(0);
+            
+            // 차트 초기화
+            chartData.labels = [];
+            chartData.datasets[0].data = [];
+            chart.update();
+            
+            // 로그 초기화
+            document.getElementById('logContainer').innerHTML = '';
+            
+            addLog('통계 초기화 완료', 'info');
+        }
+
+        // 로그 추가
+        function addLog(message, type = 'info') {
+            const logContainer = document.getElementById('logContainer');
+            const logEntry = document.createElement('div');
+            logEntry.className = 'log-entry';
+            
+            const timestamp = new Date().toLocaleTimeString();
+            let className = '';
+            
+            switch(type) {
+                case 'error': className = 'log-error'; break;
+                case 'warning': className = 'log-warning'; break;
+                case 'success': className = 'log-success'; break;
+                case 'filter': className = 'log-filter'; break;
+            }
+            
+            logEntry.innerHTML = `<span class="${className}">[${timestamp}] ${message}</span>`;
+            logContainer.appendChild(logEntry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+            
+            // 로그가 너무 많으면 오래된 것 제거
+            if (logContainer.children.length > 100) {
+                logContainer.removeChild(logContainer.firstChild);
+            }
+        }
+    </script>
+</body>
+</html>

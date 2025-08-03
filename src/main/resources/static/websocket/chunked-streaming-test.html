@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Chunked Track Streaming Test</title>
+    <script src="/libs/js/sockjs.min.js"></script>
+    <script src="/libs/js/stomp.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+        .controls {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        .control-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: inline-block;
+            width: 150px;
+            font-weight: bold;
+        }
+        input, select {
+            padding: 5px 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            width: 200px;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        button:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+        }
+        .status {
+            padding: 10px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+            background: #e9ecef;
+        }
+        .status.connected {
+            background: #d4edda;
+            color: #155724;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        .stat-box {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            text-align: center;
+        }
+        .stat-box h3 {
+            margin: 0;
+            color: #495057;
+            font-size: 14px;
+        }
+        .stat-box .value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #007bff;
+            margin-top: 5px;
+        }
+        .progress {
+            height: 30px;
+            background: #e9ecef;
+            border-radius: 15px;
+            overflow: hidden;
+            margin-bottom: 20px;
+        }
+        .progress-bar {
+            height: 100%;
+            background: #007bff;
+            transition: width 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+        }
+        .chunk-timeline {
+            margin-bottom: 20px;
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+        }
+        .chunk-item {
+            display: inline-block;
+            width: 30px;
+            height: 30px;
+            margin: 2px;
+            border-radius: 3px;
+            text-align: center;
+            line-height: 30px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .chunk-item.pending {
+            background: #e9ecef;
+            color: #6c757d;
+        }
+        .chunk-item.received {
+            background: #28a745;
+            color: white;
+        }
+        .chunk-item.processing {
+            background: #ffc107;
+            color: #212529;
+        }
+        .log {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            height: 400px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+        .log-entry {
+            margin-bottom: 5px;
+            padding: 3px 5px;
+        }
+        .log-entry.info {
+            color: #004085;
+        }
+        .log-entry.success {
+            color: #155724;
+        }
+        .log-entry.error {
+            color: #721c24;
+        }
+        .log-entry.chunk {
+            color: #856404;
+            background: #fff3cd;
+            border-radius: 3px;
+        }
+        .vessel-summary {
+            margin-top: 20px;
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+        }
+        .vessel-list {
+            max-height: 300px;
+            overflow-y: auto;
+            margin-top: 10px;
+        }
+        .vessel-item {
+            padding: 5px;
+            border-bottom: 1px solid #dee2e6;
+            display: flex;
+            justify-content: space-between;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚢 Chunked Track Streaming Test</h1>
+        
+        <div class="status" id="connectionStatus">
+            Disconnected
+        </div>
+        
+        <div class="controls">
+            <h3>Query Parameters</h3>
+            <div class="control-group">
+                <label>Start Time:</label>
+                <input type="datetime-local" id="startTime" value="2025-07-29T07:00">
+            </div>
+            <div class="control-group">
+                <label>End Time:</label>
+                <input type="datetime-local" id="endTime" value="2025-07-29T13:00">
+            </div>
+            <div class="control-group">
+                <label>Mode:</label>
+                <select id="streamMode">
+                    <option value="chunked">Chunked (Time-based)</option>
+                    <option value="standard">Standard</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label>Viewport:</label>
+                <input type="text" id="viewport" placeholder="minLon,minLat,maxLon,maxLat" value="120,30,132,38">
+            </div>
+            <div class="control-group">
+                <label>Chunk Size:</label>
+                <input type="number" id="chunkSize" value="10000" min="100" max="20000">
+            </div>
+            <div>
+                <button id="connectBtn" onclick="connect()">Connect</button>
+                <button id="startBtn" onclick="startQuery()" disabled>Start Query</button>
+                <button id="cancelBtn" onclick="cancelQuery()" disabled>Cancel</button>
+                <button id="clearBtn" onclick="clearLog()">Clear Log</button>
+            </div>
+        </div>
+        
+        <div class="stats">
+            <div class="stat-box">
+                <h3>Chunks Received</h3>
+                <div class="value" id="chunksReceived">0</div>
+            </div>
+            <div class="stat-box">
+                <h3>Tracks Received</h3>
+                <div class="value" id="tracksReceived">0</div>
+            </div>
+            <div class="stat-box">
+                <h3>Vessels Found</h3>
+                <div class="value" id="vesselsFound">0</div>
+            </div>
+            <div class="stat-box">
+                <h3>Data Size (KB)</h3>
+                <div class="value" id="dataSize">0</div>
+            </div>
+        </div>
+        
+        <div class="progress">
+            <div class="progress-bar" id="progressBar" style="width: 0%">0%</div>
+        </div>
+        
+        <div class="chunk-timeline" id="chunkTimeline">
+            <h3>Chunk Timeline</h3>
+            <div id="chunkItems"></div>
+        </div>
+        
+        <div class="vessel-summary">
+            <h3>Vessel Summary</h3>
+            <div id="vesselSummary">No data yet</div>
+            <div class="vessel-list" id="vesselList"></div>
+        </div>
+        
+        <div class="log" id="log"></div>
+    </div>
+
+    <script>
+        let stompClient = null;
+        let currentQueryId = null;
+        let chunksReceived = 0;
+        let tracksReceived = 0;
+        let totalDataSize = 0;
+        let vesselMap = new Map();
+        let chunkData = new Map();
+        let totalChunks = 0;
+        let startTime = null;
+        
+        function connect() {
+            const socket = new SockJS('/ws-tracks');
+            stompClient = Stomp.over(socket);
+            
+            stompClient.connect({}, function(frame) {
+                log('Connected to WebSocket', 'success');
+                document.getElementById('connectionStatus').textContent = 'Connected';
+                document.getElementById('connectionStatus').className = 'status connected';
+                document.getElementById('connectBtn').disabled = true;
+                document.getElementById('startBtn').disabled = false;
+                
+                // Subscribe to response topics
+                stompClient.subscribe('/user/queue/tracks/response', handleResponse);
+                stompClient.subscribe('/user/queue/tracks/status', handleStatus);
+                stompClient.subscribe('/user/queue/tracks/data', handleTrackData);
+                stompClient.subscribe('/user/queue/tracks/chunk', handleChunkedData);
+                stompClient.subscribe('/user/queue/errors', handleError);
+                
+                // Start heartbeat
+                setInterval(() => {
+                    if (stompClient && stompClient.connected) {
+                        stompClient.send('/app/heartbeat', {});
+                    }
+                }, 30000);
+            }, function(error) {
+                log('Connection error: ' + error, 'error');
+                document.getElementById('connectionStatus').textContent = 'Connection Failed';
+                document.getElementById('connectionStatus').className = 'status error';
+            });
+        }
+        
+        function startQuery() {
+            // Reset stats
+            chunksReceived = 0;
+            tracksReceived = 0;
+            totalDataSize = 0;
+            vesselMap.clear();
+            chunkData.clear();
+            totalChunks = 0;
+            startTime = Date.now();
+            updateStats();
+            
+            // Clear timeline
+            document.getElementById('chunkItems').innerHTML = '';
+            
+            // Get parameters
+            const startTimeValue = document.getElementById('startTime').value;
+            const endTimeValue = document.getElementById('endTime').value;
+            const viewportValue = document.getElementById('viewport').value;
+            const chunkSize = parseInt(document.getElementById('chunkSize').value);
+            const mode = document.getElementById('streamMode').value;
+            
+            // Parse viewport
+            let viewport = null;
+            if (viewportValue) {
+                const parts = viewportValue.split(',').map(v => parseFloat(v.trim()));
+                if (parts.length === 4) {
+                    viewport = {
+                        minLon: parts[0],
+                        minLat: parts[1],
+                        maxLon: parts[2],
+                        maxLat: parts[3]
+                    };
+                }
+            }
+            
+            const request = {
+                startTime: startTimeValue + ':00',
+                endTime: endTimeValue + ':00',
+                viewport: viewport,
+                chunkSize: chunkSize,
+                chunkedMode: mode === 'chunked',
+                includeStats: true
+            };
+            
+            log('Starting query with parameters: ' + JSON.stringify(request, null, 2), 'info');
+            
+            stompClient.send('/app/tracks/query', {}, JSON.stringify(request));
+            
+            document.getElementById('startBtn').disabled = true;
+            document.getElementById('cancelBtn').disabled = false;
+        }
+        
+        function cancelQuery() {
+            if (currentQueryId) {
+                log('Cancelling query: ' + currentQueryId, 'info');
+                stompClient.send('/app/tracks/cancel/' + currentQueryId, {});
+            }
+        }
+        
+        function handleResponse(message) {
+            const response = JSON.parse(message.body);
+            log('Query response: ' + response.status + ' (ID: ' + response.queryId + ')', 'info');
+            
+            if (response.status === 'STARTED') {
+                currentQueryId = response.queryId;
+            } else if (response.status === 'CANCELLED' || response.status === 'ERROR') {
+                document.getElementById('startBtn').disabled = false;
+                document.getElementById('cancelBtn').disabled = true;
+                currentQueryId = null;
+            }
+        }
+        
+        function handleStatus(message) {
+            const status = JSON.parse(message.body);
+            log('Status: ' + status.message + ' (' + status.progress.toFixed(1) + '%)', 'info');
+            
+            // Update progress bar
+            const progressBar = document.getElementById('progressBar');
+            progressBar.style.width = status.progress + '%';
+            progressBar.textContent = status.progress.toFixed(1) + '%';
+            
+            if (status.status === 'COMPLETED' || status.status === 'ERROR' || status.status === 'CANCELLED') {
+                document.getElementById('startBtn').disabled = false;
+                document.getElementById('cancelBtn').disabled = true;
+                currentQueryId = null;
+                
+                if (status.status === 'COMPLETED') {
+                    const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
+                    log(`Query completed in ${elapsed} seconds`, 'success');
+                    summarizeResults();
+                }
+            }
+        }
+        
+        function handleTrackData(message) {
+            const chunk = JSON.parse(message.body);
+            const headers = extractHeaders(message);
+            
+            chunksReceived++;
+            if (chunk.tracks) {
+                tracksReceived += chunk.tracks.length;
+                totalDataSize += JSON.stringify(chunk).length / 1024;
+                
+                // Process tracks
+                chunk.tracks.forEach(track => {
+                    const vesselId = `${track.sigSrcCd}_${track.targetId}`;
+                    if (!vesselMap.has(vesselId)) {
+                        vesselMap.set(vesselId, {
+                            tracks: [],
+                            totalDistance: 0,
+                            avgSpeed: 0
+                        });
+                    }
+                    vesselMap.get(vesselId).tracks.push(track);
+                });
+            }
+            
+            updateStats();
+            log(`Standard chunk ${headers.chunkIndex || chunksReceived} received: ${chunk.tracks ? chunk.tracks.length : 0} tracks`, 'chunk');
+        }
+        
+        function handleChunkedData(message) {
+            const chunk = JSON.parse(message.body);
+            const headers = extractHeaders(message);
+            
+            // Initialize timeline on first chunk
+            if (chunk.totalChunks && totalChunks === 0) {
+                totalChunks = chunk.totalChunks;
+                initializeTimeline(totalChunks);
+            }
+            
+            // Update timeline
+            updateChunkStatus(chunk.chunkIndex, 'received');
+            
+            chunksReceived++;
+            if (chunk.tracks) {
+                tracksReceived += chunk.tracks.length;
+                totalDataSize += JSON.stringify(chunk).length / 1024;
+                
+                // Store chunk data
+                chunkData.set(chunk.chunkIndex, chunk);
+                
+                // Process tracks
+                chunk.tracks.forEach(track => {
+                    const vesselId = `${track.sigSrcCd}_${track.targetId}`;
+                    if (!vesselMap.has(vesselId)) {
+                        vesselMap.set(vesselId, {
+                            tracks: [],
+                            totalDistance: 0,
+                            avgSpeed: 0,
+                            segments: []
+                        });
+                    }
+                    const vessel = vesselMap.get(vesselId);
+                    vessel.tracks.push(track);
+                    vessel.segments.push({
+                        chunkIndex: chunk.chunkIndex,
+                        track: track
+                    });
+                });
+            }
+            
+            updateStats();
+            
+            const timeRangeStr = chunk.timeRange ? 
+                `${new Date(chunk.timeRange.start).toLocaleTimeString()} - ${new Date(chunk.timeRange.end).toLocaleTimeString()}` : 
+                'N/A';
+            
+            log(`Chunk ${chunk.chunkIndex + 1}/${chunk.totalChunks} received: ${chunk.tracks ? chunk.tracks.length : 0} tracks (${timeRangeStr})`, 'chunk');
+            
+            // Merge vessels if all chunks received
+            if (chunk.isLastChunk) {
+                mergeVesselTracks();
+            }
+        }
+        
+        function handleError(message) {
+            log('Error: ' + message.body, 'error');
+        }
+        
+        function initializeTimeline(total) {
+            const container = document.getElementById('chunkItems');
+            container.innerHTML = '';
+            
+            for (let i = 0; i < total; i++) {
+                const item = document.createElement('div');
+                item.className = 'chunk-item pending';
+                item.textContent = i + 1;
+                item.title = `Chunk ${i + 1}`;
+                item.onclick = () => showChunkDetails(i);
+                container.appendChild(item);
+            }
+        }
+        
+        function updateChunkStatus(index, status) {
+            const items = document.querySelectorAll('.chunk-item');
+            if (items[index]) {
+                items[index].className = `chunk-item ${status}`;
+            }
+        }
+        
+        function showChunkDetails(index) {
+            const chunk = chunkData.get(index);
+            if (chunk) {
+                log(`Chunk ${index + 1} details: ${chunk.tracks.length} tracks, ${(chunk.stats?.chunkSizeKB || 0).toFixed(2)} KB`, 'info');
+            }
+        }
+        
+        function mergeVesselTracks() {
+            log('Merging vessel tracks from all chunks...', 'info');
+            
+            vesselMap.forEach((vessel, vesselId) => {
+                // Sort segments by chunk index
+                vessel.segments.sort((a, b) => a.chunkIndex - b.chunkIndex);
+                
+                // Calculate total distance and average speed
+                vessel.totalDistance = vessel.tracks.reduce((sum, t) => sum + (t.distanceNm || 0), 0);
+                vessel.avgSpeed = vessel.tracks.reduce((sum, t) => sum + (t.avgSpeed || 0), 0) / vessel.tracks.length;
+            });
+            
+            log(`Merged ${vesselMap.size} vessels from ${chunksReceived} chunks`, 'success');
+            updateVesselSummary();
+        }
+        
+        function updateStats() {
+            document.getElementById('chunksReceived').textContent = chunksReceived;
+            document.getElementById('tracksReceived').textContent = tracksReceived;
+            document.getElementById('vesselsFound').textContent = vesselMap.size;
+            document.getElementById('dataSize').textContent = totalDataSize.toFixed(2);
+        }
+        
+        function updateVesselSummary() {
+            const summary = document.getElementById('vesselSummary');
+            const list = document.getElementById('vesselList');
+            
+            summary.innerHTML = `
+                <strong>Total Vessels:</strong> ${vesselMap.size}<br>
+                <strong>Average Tracks per Vessel:</strong> ${(tracksReceived / vesselMap.size).toFixed(1)}<br>
+                <strong>Mode:</strong> ${document.getElementById('streamMode').value}
+            `;
+            
+            // Show top 10 vessels by distance
+            const topVessels = Array.from(vesselMap.entries())
+                .sort((a, b) => b[1].totalDistance - a[1].totalDistance)
+                .slice(0, 10);
+            
+            list.innerHTML = '<h4>Top 10 Vessels by Distance</h4>';
+            topVessels.forEach(([vesselId, data]) => {
+                const item = document.createElement('div');
+                item.className = 'vessel-item';
+                item.innerHTML = `
+                    <span>${vesselId}</span>
+                    <span>${data.totalDistance.toFixed(2)} nm | ${data.avgSpeed.toFixed(1)} kts | ${data.tracks.length} tracks</span>
+                `;
+                list.appendChild(item);
+            });
+        }
+        
+        function summarizeResults() {
+            const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
+            const throughput = (totalDataSize / elapsed).toFixed(2);
+            
+            log('=== Query Summary ===', 'success');
+            log(`Total time: ${elapsed} seconds`, 'info');
+            log(`Chunks received: ${chunksReceived}`, 'info');
+            log(`Tracks received: ${tracksReceived}`, 'info');
+            log(`Vessels found: ${vesselMap.size}`, 'info');
+            log(`Total data size: ${totalDataSize.toFixed(2)} KB`, 'info');
+            log(`Throughput: ${throughput} KB/s`, 'info');
+            log('===================', 'success');
+        }
+        
+        function extractHeaders(message) {
+            // STOMP.js doesn't provide easy access to custom headers
+            // This is a workaround - in production, use proper header extraction
+            return {
+                chunkIndex: chunksReceived - 1
+            };
+        }
+        
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logDiv.appendChild(entry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+        
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+        }
+        
+        // Auto-connect on load
+        window.onload = function() {
+            log('Page loaded. Click Connect to start.', 'info');
+        };
+    </script>
+</body>
+</html>

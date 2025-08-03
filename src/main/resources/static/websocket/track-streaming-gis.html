@@ -1,0 +1,1187 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket 궤적 스트리밍 - GIS 실시간 렌더링</title>
+    
+    <!-- Local CSS -->
+    <link href="/libs/css/bootstrap.min.css" rel="stylesheet">
+    <link href="/libs/css/bootstrap-icons.css" rel="stylesheet">
+    <link href="/libs/css/maplibre-gl.css" rel="stylesheet">
+    
+    <!-- Local JS -->
+    <script src="/libs/js/sockjs.min.js"></script>
+    <script src="/libs/js/stomp.min.js"></script>
+    <script src="/libs/js/maplibre-gl.js"></script>
+    <script src="/libs/js/deck.gl.min.js"></script>
+    <script src="/js/stores/trackStore.js"></script>
+    <script src="/js/animation/VesselAnimationController.js"></script>
+    
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+        
+        #mapContainer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100vh;
+            background: #1a1a1a;
+        }
+        
+        .control-panel {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            z-index: 1000;
+            max-width: 450px;
+            min-width: 400px;
+            max-height: calc(100vh - 250px); /* 타임라인과 로그 패널 공간 확보 */
+            overflow-y: auto;
+        }
+        
+        .stats-panel {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            z-index: 1000;
+            min-width: 300px;
+        }
+        
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        
+        .status-connected {
+            background-color: #28a745;
+        }
+        
+        .status-disconnected {
+            background-color: #dc3545;
+        }
+        
+        .progress {
+            height: 25px;
+            margin: 15px 0;
+        }
+        
+        .log-panel {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            width: calc(50% - 20px); /* 화면 절반 너비로 제한 */
+            max-width: 800px; /* 최대 너비 제한 */
+            background: rgba(255, 255, 255, 0.95);
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            z-index: 1000;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        
+        .log-entry {
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 12px;
+            padding: 4px 8px;
+            margin: 2px 0;
+            border-radius: 3px;
+        }
+        
+        .log-info { background-color: #e3f2fd; }
+        .log-success { background-color: #e8f5e9; }
+        .log-error { background-color: #ffebee; }
+        .log-warning { background-color: #fff3e0; }
+        .log-filter { background-color: #f3e5f5; }
+        
+        .stat-card {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 28px;
+            font-weight: bold;
+            color: #007bff;
+            margin: 5px 0;
+        }
+        
+        .stat-label {
+            font-size: 14px;
+            color: #6c757d;
+        }
+        
+        .form-section {
+            margin-bottom: 20px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #e9ecef;
+        }
+        
+        .form-section:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+            padding-bottom: 0;
+        }
+        
+        .filter-panel {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 6px;
+            margin-top: 10px;
+        }
+        
+        .legend {
+            position: absolute;
+            bottom: 320px;
+            right: 10px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            z-index: 1000;
+        }
+        
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin: 8px 0;
+        }
+        
+        .legend-color {
+            width: 30px;
+            height: 4px;
+            margin-right: 10px;
+            border-radius: 2px;
+        }
+        
+        .vessel-track-info {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            z-index: 9999;
+            display: none;
+        }
+        
+        .collapsible-section {
+            cursor: pointer;
+            user-select: none;
+        }
+        
+        .collapsible-section i {
+            transition: transform 0.3s;
+        }
+        
+        .collapsible-section.collapsed i {
+            transform: rotate(-90deg);
+        }
+        
+        #renderingControls {
+            background: #e9ecef;
+            padding: 10px;
+            border-radius: 6px;
+            margin-top: 10px;
+        }
+        
+        .time-presets {
+            display: flex;
+            gap: 5px;
+            margin-top: 10px;
+        }
+        
+        .time-preset-btn {
+            flex: 1;
+            font-size: 12px;
+            padding: 4px 8px;
+        }
+    </style>
+</head>
+<body>
+    <div id="mapContainer"></div>
+    
+    <!-- 제어 패널 -->
+    <div class="control-panel">
+        <h5 class="mb-3">
+            <i class="bi bi-globe2"></i> WebSocket 궤적 스트리밍 - GIS
+            <span class="status-indicator status-disconnected" id="statusIndicator"></span>
+        </h5>
+        
+        <!-- 연결 제어 -->
+        <div class="form-section">
+            <h6>연결 제어</h6>
+            <div class="btn-group w-100" role="group">
+                <button id="connectBtn" class="btn btn-success" onclick="connect()">
+                    <i class="bi bi-plug"></i> 연결
+                </button>
+                <button id="disconnectBtn" class="btn btn-danger" onclick="disconnect()" disabled>
+                    <i class="bi bi-plug-fill"></i> 연결 해제
+                </button>
+            </div>
+        </div>
+        
+        <!-- 쿼리 설정 -->
+        <div class="form-section">
+            <h6 class="collapsible-section" onclick="toggleSection('querySettings')">
+                <i class="bi bi-chevron-down"></i> 쿼리 설정
+            </h6>
+            <div id="querySettings">
+                <div class="row g-2 mt-2">
+                    <div class="col-6">
+                        <label class="form-label small">시작 시간</label>
+                        <input type="datetime-local" class="form-control form-control-sm" id="startTime">
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label small">종료 시간</label>
+                        <input type="datetime-local" class="form-control form-control-sm" id="endTime">
+                    </div>
+                </div>
+                
+                <!-- 시간 프리셋 버튼 추가 -->
+                <div class="time-presets">
+                    <button class="btn btn-sm btn-outline-secondary time-preset-btn" onclick="setTimePreset(1)">
+                        1시간
+                    </button>
+                    <button class="btn btn-sm btn-outline-secondary time-preset-btn" onclick="setTimePreset(6)">
+                        6시간
+                    </button>
+                    <button class="btn btn-sm btn-outline-secondary time-preset-btn" onclick="setTimePreset(24)">
+                        1일
+                    </button>
+                    <button class="btn btn-sm btn-outline-secondary time-preset-btn" onclick="setTimePreset(72)">
+                        3일
+                    </button>
+                </div>
+                
+                <div class="row g-2 mt-2">
+                    <div class="col-6">
+                        <label class="form-label small">Min Longitude</label>
+                        <input type="number" class="form-control form-control-sm" id="minLon" value="124.0" step="0.1">
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label small">Max Longitude</label>
+                        <input type="number" class="form-control form-control-sm" id="maxLon" value="132.0" step="0.1">
+                    </div>
+                </div>
+                
+                <div class="row g-2 mt-2">
+                    <div class="col-6">
+                        <label class="form-label small">Min Latitude</label>
+                        <input type="number" class="form-control form-control-sm" id="minLat" value="33.0" step="0.1">
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label small">Max Latitude</label>
+                        <input type="number" class="form-control form-control-sm" id="maxLat" value="38.0" step="0.1">
+                    </div>
+                </div>
+                
+                <div class="row g-2 mt-2">
+                    <div class="col-6">
+                        <label class="form-label small">청크 크기</label>
+                        <input type="number" class="form-control form-control-sm" id="chunkSize" value="5000" min="100" max="20000">
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label small">단순화 임계값</label>
+                        <input type="number" class="form-control form-control-sm" id="simplification" value="0.001" step="0.0001">
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 거리/속도 필터 -->
+        <div class="form-section">
+            <h6 class="collapsible-section" onclick="toggleSection('filterSettings')">
+                <i class="bi bi-chevron-down"></i> 거리/속도 필터
+            </h6>
+            <div id="filterSettings" class="filter-panel">
+                <div class="row g-2">
+                    <div class="col-6">
+                        <label class="form-label small">최소 이동거리 (nm)</label>
+                        <input type="number" class="form-control form-control-sm" id="minDistance" value="" placeholder="제한 없음" step="0.1">
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label small">최대 이동거리 (nm)</label>
+                        <input type="number" class="form-control form-control-sm" id="maxDistance" value="" placeholder="제한 없음" step="0.1">
+                    </div>
+                </div>
+                <div class="row g-2 mt-2">
+                    <div class="col-6">
+                        <label class="form-label small">최소 평균속도 (knots)</label>
+                        <input type="number" class="form-control form-control-sm" id="minSpeed" value="" placeholder="제한 없음" step="0.1">
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label small">최대 평균속도 (knots)</label>
+                        <input type="number" class="form-control form-control-sm" id="maxSpeed" value="" placeholder="제한 없음" step="0.1">
+                    </div>
+                </div>
+                <div class="form-check mt-2">
+                    <input class="form-check-input" type="checkbox" id="includeInterBucket" checked>
+                    <label class="form-check-label small" for="includeInterBucket">
+                        Bucket 간 거리 포함
+                    </label>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 렌더링 제어 -->
+        <div class="form-section">
+            <h6>렌더링 제어</h6>
+            <div id="renderingControls">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="autoMerge" checked>
+                    <label class="form-check-label small" for="autoMerge">
+                        청크 자동 병합
+                    </label>
+                </div>
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="showAnimation" checked>
+                    <label class="form-check-label small" for="showAnimation">
+                        수신 애니메이션 표시
+                    </label>
+                </div>
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="colorBySpeed" checked>
+                    <label class="form-check-label small" for="colorBySpeed">
+                        속도별 색상 구분
+                    </label>
+                </div>
+                <div class="mt-2">
+                    <label class="form-label small">궤적 투명도</label>
+                    <input type="range" class="form-range" id="trackOpacity" min="0" max="100" value="80">
+                </div>
+            </div>
+        </div>
+        
+        <!-- 쿼리 실행 -->
+        <div class="form-section">
+            <button id="startQueryBtn" class="btn btn-primary w-100" onclick="startQuery()" disabled>
+                <i class="bi bi-play-circle"></i> 쿼리 시작
+            </button>
+            <button id="cancelQueryBtn" class="btn btn-warning w-100 mt-2" onclick="cancelQuery()" style="display: none;">
+                <i class="bi bi-stop-circle"></i> 쿼리 취소
+            </button>
+            <button id="clearMapBtn" class="btn btn-secondary w-100 mt-2" onclick="clearMap()">
+                <i class="bi bi-trash"></i> 지도 초기화
+            </button>
+        </div>
+        
+        <!-- 진행률 -->
+        <div class="progress" style="display: none;" id="progressContainer">
+            <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                 role="progressbar" 
+                 id="progressBar"
+                 style="width: 0%">0%</div>
+        </div>
+    </div>
+    
+    <!-- 통계 패널 -->
+    <div class="stats-panel">
+        <h6 class="mb-3"><i class="bi bi-graph-up"></i> 실시간 통계</h6>
+        
+        <div class="stat-card">
+            <div class="stat-label">수신된 궤적</div>
+            <div class="stat-value" id="receivedTracks">0</div>
+        </div>
+        
+        <div class="stat-card">
+            <div class="stat-label">필터된 선박</div>
+            <div class="stat-value" id="filteredVessels">0</div>
+        </div>
+        
+        <div class="stat-card">
+            <div class="stat-label">렌더링된 포인트</div>
+            <div class="stat-value" id="renderedPoints">0</div>
+        </div>
+        
+        <div class="stat-card">
+            <div class="stat-label">처리 시간</div>
+            <div class="stat-value" id="processingTime">0</div>
+            <div class="stat-label">초</div>
+        </div>
+    </div>
+    
+    <!-- 범례 -->
+    <div class="legend" style="display: none;" id="legend">
+        <h6 class="mb-2">속도 범례 (knots)</h6>
+        <div class="legend-item">
+            <div class="legend-color" style="background: #1e90ff;"></div>
+            <span>0 - 5</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background: #00ff00;"></div>
+            <span>5 - 10</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background: #ffff00;"></div>
+            <span>10 - 15</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background: #ff8c00;"></div>
+            <span>15 - 20</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background: #ff0000;"></div>
+            <span>20+</span>
+        </div>
+    </div>
+    
+    <!-- 로그 패널 -->
+    <div class="log-panel">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <h6 class="mb-0"><i class="bi bi-terminal"></i> 처리 로그</h6>
+            <button class="btn btn-sm btn-outline-secondary" onclick="clearLogs()">
+                <i class="bi bi-trash"></i> Clear
+            </button>
+        </div>
+        <div id="logContainer" style="max-height: 200px; overflow-y: auto;">
+            <!-- 로그 엔트리가 여기에 추가됨 -->
+        </div>
+    </div>
+    
+    <!-- 선박 정보 툴팁 -->
+    <div class="vessel-track-info" id="vesselTooltip"></div>
+
+    <script>
+        // 전역 변수
+        let map;
+        let deckOverlay;
+        let stompClient = null;
+        let currentQueryId = null;
+        let startTime = null;
+        let animationController = null;
+        
+        // trackStore는 /js/stores/trackStore.js에서 전역으로 정의됨
+        
+        // LineStringM 파싱 함수
+        function parseLineStringM(wkt, startTime) {
+            if (!wkt) return [];
+            
+            const matches = wkt.match(/LINESTRING M\s*\((.*)\)/);
+            if (!matches) return [];
+            
+            const baseTime = new Date(startTime).getTime();
+            
+            return matches[1].split(',').map(coord => {
+                const parts = coord.trim().split(/\s+/);
+                return {
+                    lon: parseFloat(parts[0]),
+                    lat: parseFloat(parts[1]),
+                    time: baseTime + (parseFloat(parts[2] || 0) * 1000)
+                };
+            }).filter(p => !isNaN(p.lon) && !isNaN(p.lat));
+        }
+        
+        // 페이지 로드 시 시간 설정
+        function setDefaultTimeRange() {
+            const now = new Date();
+            // 데이터 지연 고려하여 15분 이전까지만 조회
+            const adjustedNow = new Date(now.getTime() - 15 * 60 * 1000);
+            const sixHoursAgo = new Date(adjustedNow.getTime() - 6 * 60 * 60 * 1000);
+            
+            // 로컬 시간대에 맞게 포맷
+            const formatDateTime = (date) => {
+                const year = date.getFullYear();
+                const month = String(date.getMonth() + 1).padStart(2, '0');
+                const day = String(date.getDate()).padStart(2, '0');
+                const hours = String(date.getHours()).padStart(2, '0');
+                const minutes = String(date.getMinutes()).padStart(2, '0');
+                return `${year}-${month}-${day}T${hours}:${minutes}`;
+            };
+            
+            document.getElementById('startTime').value = formatDateTime(sixHoursAgo);
+            document.getElementById('endTime').value = formatDateTime(adjustedNow);
+        }
+        
+        // 시간 프리셋 설정
+        function setTimePreset(hours) {
+            const now = new Date();
+            // 데이터 지연 고려
+            const adjustedNow = new Date(now.getTime() - 15 * 60 * 1000);
+            const startTime = new Date(adjustedNow.getTime() - hours * 60 * 60 * 1000);
+            
+            const formatDateTime = (date) => {
+                const year = date.getFullYear();
+                const month = String(date.getMonth() + 1).padStart(2, '0');
+                const day = String(date.getDate()).padStart(2, '0');
+                const hours = String(date.getHours()).padStart(2, '0');
+                const minutes = String(date.getMinutes()).padStart(2, '0');
+                return `${year}-${month}-${day}T${hours}:${minutes}`;
+            };
+            
+            document.getElementById('startTime').value = formatDateTime(startTime);
+            document.getElementById('endTime').value = formatDateTime(adjustedNow);
+            
+            addLog(`시간 범위 설정: 최근 ${hours}시간`, 'info');
+        }
+        
+        // 맵 초기화
+        function initializeMap() {
+            map = new maplibregl.Map({
+                container: 'mapContainer',
+                style: {
+                    version: 8,
+                    sources: {
+                        'raster-tiles': {
+                            type: 'raster',
+                            tiles: ['/api/tiles/world/{z}/{x}/{y}.webp'],
+                            tileSize: 256,
+                            attribution: 'Local Tile Server'
+                        }
+                    },
+                    layers: [{
+                        id: 'simple-tiles',
+                        type: 'raster',
+                        source: 'raster-tiles',
+                        minzoom: 0,
+                        maxzoom: 22
+                    }]
+                },
+                center: [128, 35.5],
+                zoom: 6
+            });
+            
+            // deck.gl 오버레이 추가
+            deckOverlay = new deck.MapboxOverlay({
+                interleaved: true,
+                layers: []
+            });
+            
+            // 전역 변수로 등록
+            window.deckOverlay = deckOverlay;
+            
+            map.addControl(deckOverlay);
+            map.addControl(new maplibregl.NavigationControl());
+            
+            // viewport 업데이트 함수 정의
+            window.updateStoreViewport = () => {
+                const bounds = map.getBounds();
+                if (bounds) {
+                    trackStore.updateViewport({
+                        bounds: [
+                            bounds.getWest(), 
+                            bounds.getSouth(), 
+                            bounds.getEast(), 
+                            bounds.getNorth()
+                        ],
+                        zoom: map.getZoom()
+                    });
+                    console.log('Viewport updated:', trackStore.getState().viewport);
+                }
+            };
+            
+            // 맵 이벤트
+            map.on('load', () => {
+                addLog('지도 초기화 완료', 'success');
+                
+                // 초기 viewport 설정
+                window.updateStoreViewport();
+            });
+            
+            // 맵 이동/줌 시 viewport 업데이트
+            map.on('moveend', window.updateStoreViewport);
+            map.on('zoomend', window.updateStoreViewport);
+        }
+        
+        // WebSocket 연결
+        function connect() {
+            const socket = new SockJS('/ws-tracks');
+            stompClient = Stomp.over(socket);
+            
+            // 디버그 모드 비활성화
+            stompClient.debug = null;
+            
+            stompClient.connect({}, (frame) => {
+                addLog('WebSocket 연결 성공', 'success');
+                updateConnectionStatus(true);
+                
+                // 궤적 데이터 구독
+                stompClient.subscribe('/user/queue/tracks/data', (message) => {
+                    const chunk = JSON.parse(message.body);
+                    handleTrackChunk(chunk);
+                });
+                
+                // 상태 업데이트 구독
+                stompClient.subscribe('/user/queue/tracks/status', (message) => {
+                    const status = JSON.parse(message.body);
+                    handleStatusUpdate(status);
+                });
+                
+                // 에러 구독
+                stompClient.subscribe('/user/queue/errors', (message) => {
+                    const error = JSON.parse(message.body);
+                    addLog(`에러: ${error.message}`, 'error');
+                });
+                
+            }, (error) => {
+                addLog(`연결 실패: ${error}`, 'error');
+                updateConnectionStatus(false);
+            });
+        }
+        
+        // WebSocket 연결 해제
+        function disconnect() {
+            if (stompClient && stompClient.connected) {
+                stompClient.disconnect(() => {
+                    addLog('WebSocket 연결 해제', 'info');
+                    updateConnectionStatus(false);
+                });
+            }
+        }
+        
+        // 쿼리 시작
+        function startQuery() {
+            if (!stompClient || !stompClient.connected) {
+                alert('WebSocket이 연결되지 않았습니다.');
+                return;
+            }
+            
+            // 이전 데이터 초기화
+            clearMap();
+            
+            startTime = Date.now();
+            
+            const request = {
+                startTime: document.getElementById('startTime').value + ':00',
+                endTime: document.getElementById('endTime').value + ':00',
+                viewport: {
+                    minLon: parseFloat(document.getElementById('minLon').value),
+                    maxLon: parseFloat(document.getElementById('maxLon').value),
+                    minLat: parseFloat(document.getElementById('minLat').value),
+                    maxLat: parseFloat(document.getElementById('maxLat').value)
+                },
+                chunkSize: parseInt(document.getElementById('chunkSize').value),
+                simplificationTolerance: parseFloat(document.getElementById('simplification').value),
+                includeStats: true
+            };
+            
+            // 거리/속도 필터 추가
+            const minDist = document.getElementById('minDistance').value;
+            const maxDist = document.getElementById('maxDistance').value;
+            const minSpeed = document.getElementById('minSpeed').value;
+            const maxSpeed = document.getElementById('maxSpeed').value;
+            
+            if (minDist) request.minTotalDistance = parseFloat(minDist);
+            if (maxDist) request.maxTotalDistance = parseFloat(maxDist);
+            if (minSpeed) request.minAvgSpeed = parseFloat(minSpeed);
+            if (maxSpeed) request.maxAvgSpeed = parseFloat(maxSpeed);
+            
+            request.includeInterBucketDistance = document.getElementById('includeInterBucket').checked;
+            
+            // 타임라인 바로 초기화 (쿼리 시작/종료 시간 사용)
+            const queryStartTime = new Date(request.startTime).getTime();
+            const queryEndTime = new Date(request.endTime).getTime();
+            
+            // 애니메이션 시간 범위 설정
+            trackStore.setAnimationTimeRange(queryStartTime, queryEndTime);
+            
+            // 애니메이션 컨트롤러 미리 초기화
+            if (!animationController) {
+                initializeAnimation();
+            } else {
+                animationController.updateUI();
+            }
+            
+            // 쿼리 시작
+            stompClient.send('/app/tracks/query', {}, JSON.stringify(request));
+            
+            addLog('쿼리 시작...', 'info');
+            showProgress();
+            
+            // 버튼 상태 변경
+            document.getElementById('startQueryBtn').style.display = 'none';
+            document.getElementById('cancelQueryBtn').style.display = 'block';
+        }
+        
+        // 쿼리 취소
+        function cancelQuery() {
+            if (currentQueryId && stompClient && stompClient.connected) {
+                stompClient.send(`/app/tracks/cancel/${currentQueryId}`, {}, '');
+                addLog('쿼리 취소 요청', 'warning');
+            }
+        }
+        
+        // 궤적 청크 처리
+        function handleTrackChunk(chunk) {
+            currentQueryId = chunk.queryId;
+            
+            // 병합된 데이터 처리
+            if (chunk.isMerged && chunk.mergedTracks) {
+                // 백엔드에서 이미 병합된 데이터
+                chunk.mergedTracks.forEach(vessel => {
+                    // startTime 유효성 검증
+                    const startTimeStr = vessel.startTime || vessel.timeBuckets?.[0];
+                    const endTimeStr = vessel.endTime || vessel.timeBuckets?.[vessel.timeBuckets.length - 1];
+                    
+                    if (!startTimeStr) {
+                        console.error('No valid startTime for vessel:', vessel.vesselId);
+                        return;
+                    }
+                    
+                    // 병합된 궤적 파싱
+                    const fullPath = parseLineStringM(vessel.mergedTrackGeom, startTimeStr);
+                    
+                    if (fullPath.length === 0) {
+                        console.warn('Empty path for vessel:', vessel.vesselId);
+                        return;
+                    }
+                    
+                    trackStore.addProcessedVessel({
+                        id: vessel.vesselId,
+                        sigSrcCd: vessel.sigSrcCd,
+                        targetId: vessel.targetId,
+                        fullPath: fullPath,
+                        segments: new Map(), // 빈 세그먼트 맵
+                        metadata: {
+                            totalDistance: vessel.totalDistanceNm || 0,
+                            avgSpeed: vessel.avgSpeed || 0,
+                            minTime: fullPath[0].time,
+                            maxTime: fullPath[fullPath.length - 1].time
+                        }
+                    });
+                });
+                
+                // 수신된 궤적 수 업데이트
+                const receivedCount = parseInt(document.getElementById('receivedTracks').textContent) || 0;
+                const totalPoints = chunk.mergedTracks.reduce((sum, v) => {
+                    const path = parseLineStringM(v.mergedTrackGeom, v.startTime || v.timeBuckets?.[0]);
+                    return sum + path.length;
+                }, 0);
+                document.getElementById('receivedTracks').textContent = receivedCount + chunk.mergedTracks.length;
+                document.getElementById('renderedPoints').textContent = 
+                    (parseInt(document.getElementById('renderedPoints').textContent) || 0) + totalPoints;
+            } else {
+                // 기존 방식 (세그먼트별)
+                chunk.tracks.forEach(track => {
+                    // startTime 확인 및 설정
+                    if (!track.startTime) {
+                        if (track.timeBucket) {
+                            track.startTime = track.timeBucket;
+                        } else if (track.startTimeStr) {
+                            track.startTime = track.startTimeStr;
+                        } else {
+                            console.warn('No startTime found for track:', track);
+                            return;
+                        }
+                    }
+                    
+                    // trackGeom 유효성 검사
+                    if (!track.trackGeom || track.trackGeom === 'LINESTRING EMPTY') {
+                        console.warn('Invalid track geometry:', track.targetId);
+                        return;
+                    }
+                    
+                    trackStore.mergeTrackData(track);
+                });
+                
+                const receivedCount = parseInt(document.getElementById('receivedTracks').textContent) || 0;
+                document.getElementById('receivedTracks').textContent = receivedCount + chunk.tracks.length;
+                
+                // 포인트 수 계산
+                const pointsInChunk = chunk.tracks.reduce((sum, track) => {
+                    const points = parseLineStringM(track.trackGeom, track.startTime || track.timeBucket);
+                    return sum + points.length;
+                }, 0);
+                document.getElementById('renderedPoints').textContent = 
+                    (parseInt(document.getElementById('renderedPoints').textContent) || 0) + pointsInChunk;
+            }
+            
+            // 성능 개선: 렌더링 업데이트를 청크마다가 아닌 일정 간격으로만 수행
+            if (!this.renderTimer) {
+                this.renderTimer = setTimeout(() => {
+                    updateStats();
+                    updateGisLayers();
+                    if (window.updateStoreViewport) {
+                        window.updateStoreViewport();
+                    }
+                    this.renderTimer = null;
+                }, 100); // 100ms 간격으로 렌더링
+            }
+            
+            // 진행률 업데이트
+            if (chunk.stats) {
+                updateProgress(chunk.stats.progressPercentage);
+            }
+            
+            // 마지막 청크인 경우
+            if (chunk.isLastChunk) {
+                setTimeout(() => {
+                    handleQueryComplete();
+                }, 500);
+            }
+            
+            const dataInfo = chunk.isMerged ? 
+                `${chunk.mergedTracks.length}척 병합 데이터` : 
+                `${chunk.tracks.length}개 궤적`;
+            addLog(`청크 ${chunk.chunkIndex + 1}/${chunk.totalChunks || '?'} 수신 (${dataInfo})`, 'success');
+        }
+        
+        // 통계 업데이트 함수
+        function updateStats() {
+            const stats = trackStore.getPerformanceStats();
+            document.getElementById('filteredVessels').textContent = stats.totalVessels;
+            // renderedPoints는 handleTrackChunk에서 직접 계산하므로 여기서는 업데이트 안함
+        }
+        
+
+        
+        // GIS 레이어 업데이트
+        function updateGisLayers(returnLayerOnly = false) {
+            const layers = [];
+            
+            // 타임라인 체크박스 상태 확인
+            const showTracks = document.getElementById('showTracksCheck') ? 
+                document.getElementById('showTracksCheck').checked : true;
+            
+            // PathLayer로 궤적 렌더링
+            const pathData = [];
+            const colorBySpeed = document.getElementById('colorBySpeed').checked;
+            const opacity = parseInt(document.getElementById('trackOpacity').value) / 100;
+            
+            const visibleVessels = trackStore.getVisibleVessels(true); // includeAllTime = true
+            
+            // 성능 최적화: 대용량 데이터의 경우 일부만 렌더링
+            const maxRenderPaths = 10000;
+            const vesselsToRender = visibleVessels.slice(0, maxRenderPaths);
+            
+            vesselsToRender.forEach(vessel => {
+                if (vessel.fullPath && vessel.fullPath.length > 1) {
+                    // 성능 최적화: 매우 긴 궤적은 단순화
+                    const simplifiedPath = vessel.fullPath.length > 1000 ?
+                        vessel.fullPath.filter((p, i) => i % Math.ceil(vessel.fullPath.length / 500) === 0) :
+                        vessel.fullPath;
+                    
+                    pathData.push({
+                        path: simplifiedPath.map(p => [p.lon, p.lat]),
+                        color: colorBySpeed ? getSpeedColor(vessel.metadata.avgSpeed) : [0, 255, 0],
+                        width: 2,
+                        vesselId: vessel.id,
+                        avgSpeed: vessel.metadata.avgSpeed,
+                        distance: vessel.metadata.totalDistance
+                    });
+                }
+            });
+            
+            let trackLayer = null;
+            
+            if (showTracks && pathData.length > 0) {
+                trackLayer = new deck.PathLayer({
+                    id: 'vessel-tracks',
+                    data: pathData,
+                    pickable: true,
+                    widthScale: 1,
+                    widthMinPixels: 1,
+                    widthMaxPixels: 3,
+                    getPath: d => d.path,
+                    getColor: d => [...d.color, opacity * 255],
+                    getWidth: d => d.width,
+                    // 성능 최적화 옵션
+                    parameters: {
+                        depthTest: false,
+                        blend: true
+                    },
+                    updateTriggers: {
+                        getColor: [colorBySpeed, opacity]
+                    },
+                    onHover: (info) => {
+                        if (info.object) {
+                            showVesselTooltip(info);
+                        } else {
+                            hideVesselTooltip();
+                        }
+                    }
+                });
+                
+                if (returnLayerOnly) {
+                    return trackLayer;
+                }
+                
+                layers.push(trackLayer);
+                
+                // 애니메이션 효과 (선택적, 데이터가 적을 때만)
+                if (document.getElementById('showAnimation').checked && pathData.length < 1000) {
+                    layers.push(new deck.ScatterplotLayer({
+                        id: 'track-points',
+                        data: pathData.flatMap(d => d.path.filter((p, i) => i % 10 === 0).map((p, i) => ({
+                            position: p,
+                            color: d.color,
+                            delay: i * 10
+                        }))),
+                        pickable: false,
+                        opacity: 0.3,
+                        stroked: false,
+                        filled: true,
+                        radiusScale: 1,
+                        radiusMinPixels: 1,
+                        radiusMaxPixels: 2,
+                        getPosition: d => d.position,
+                        getFillColor: d => d.color
+                    }));
+                }
+            }
+            
+            if (!returnLayerOnly) {
+                // deck.gl 레이어 업데이트
+                deckOverlay.setProps({ layers });
+                
+                // 통계 업데이트
+                const stats = trackStore.getPerformanceStats();
+                document.getElementById('renderedPoints').textContent = stats.totalPoints.toLocaleString();
+                
+                // 범례 표시
+                if (colorBySpeed && stats.totalVessels > 0) {
+                    document.getElementById('legend').style.display = 'block';
+                }
+                
+                // 성능 정보 표시
+                if (stats.totalVessels > 10000) {
+                    addLog(`대규모 데이터: ${stats.totalVessels.toLocaleString()}척 중 ${vesselsToRender.length.toLocaleString()}척 렌더링`, 'warning');
+                }
+            }
+            
+            return trackLayer;
+        }
+        
+        // 전역 함수로 등록
+        window.updateGisLayers = updateGisLayers;
+        
+        // 속도에 따른 색상
+        function getSpeedColor(speed) {
+            if (speed < 5) return [30, 144, 255];      // 파란색
+            if (speed < 10) return [0, 255, 0];        // 초록색
+            if (speed < 15) return [255, 255, 0];      // 노란색
+            if (speed < 20) return [255, 140, 0];      // 주황색
+            return [255, 0, 0];                        // 빨간색
+        }
+        
+        // 선박 툴팁 표시
+        function showVesselTooltip(info) {
+            const tooltip = document.getElementById('vesselTooltip');
+            const { x, y, object } = info;
+            
+            tooltip.innerHTML = `
+                <strong>선박 ID:</strong> ${object.vesselId}<br>
+                <strong>평균 속도:</strong> ${object.avgSpeed.toFixed(1)} knots<br>
+                <strong>이동 거리:</strong> ${object.distance.toFixed(1)} nm
+            `;
+            
+            tooltip.style.left = x + 10 + 'px';
+            tooltip.style.top = y + 10 + 'px';
+            tooltip.style.display = 'block';
+        }
+        
+        // 선박 툴팁 숨기기
+        function hideVesselTooltip() {
+            document.getElementById('vesselTooltip').style.display = 'none';
+        }
+        
+        // 상태 업데이트 처리
+        function handleStatusUpdate(status) {
+            addLog(`상태: ${status.status} - ${status.message}`, 
+                   status.status === 'ERROR' ? 'error' : 'info');
+            
+            if (status.progressPercentage >= 0) {
+                updateProgress(status.progressPercentage);
+            }
+            
+            if (status.status === 'COMPLETED' || status.status === 'CANCELLED') {
+                handleQueryComplete();
+            }
+        }
+        
+        // 쿼리 완료 처리
+        function handleQueryComplete() {
+            const endTime = Date.now();
+            const duration = ((endTime - startTime) / 1000).toFixed(1);
+            const stats = trackStore.getPerformanceStats();
+            
+            document.getElementById('processingTime').textContent = duration;
+            
+            addLog(`쿼리 완료! 총 ${stats.totalVessels}개 선박 수신, ${duration}초 소요`, 'success');
+            
+            // 버튼 상태 복원
+            document.getElementById('startQueryBtn').style.display = 'block';
+            document.getElementById('cancelQueryBtn').style.display = 'none';
+            
+            hideProgress();
+            
+            // 맵 범위 자동 조정
+            if (stats.totalVessels > 0) {
+                fitMapBounds();
+            }
+        }
+        
+        // 맵 범위 조정
+        function fitMapBounds() {
+            const bounds = new maplibregl.LngLatBounds();
+            const visibleVessels = trackStore.getVisibleVessels();
+            let hasPoints = false;
+            
+            visibleVessels.forEach(vessel => {
+                if (vessel.fullPath && vessel.fullPath.length > 0) {
+                    vessel.fullPath.forEach(point => {
+                        if (point && point.lon !== undefined && point.lat !== undefined) {
+                            bounds.extend([point.lon, point.lat]);
+                            hasPoints = true;
+                        }
+                    });
+                }
+            });
+            
+            if (hasPoints) {
+                map.fitBounds(bounds, {
+                    padding: 50,
+                    duration: 1000
+                });
+            }
+        }
+        
+        // 지도 초기화
+        function clearMap() {
+            trackStore.clearTracks();
+            
+            if (animationController) {
+                animationController.stop();
+                animationController = null;
+            }
+            
+            updateGisLayers();
+            
+            document.getElementById('receivedTracks').textContent = '0';
+            document.getElementById('filteredVessels').textContent = '0';
+            document.getElementById('renderedPoints').textContent = '0';
+            document.getElementById('processingTime').textContent = '0';
+            
+            document.getElementById('legend').style.display = 'none';
+            
+            addLog('지도 초기화 완료', 'info');
+        }
+        
+        // 연결 상태 업데이트
+        function updateConnectionStatus(connected) {
+            const indicator = document.getElementById('statusIndicator');
+            const connectBtn = document.getElementById('connectBtn');
+            const disconnectBtn = document.getElementById('disconnectBtn');
+            const startQueryBtn = document.getElementById('startQueryBtn');
+            
+            if (connected) {
+                indicator.classList.remove('status-disconnected');
+                indicator.classList.add('status-connected');
+                connectBtn.disabled = true;
+                disconnectBtn.disabled = false;
+                startQueryBtn.disabled = false;
+            } else {
+                indicator.classList.remove('status-connected');
+                indicator.classList.add('status-disconnected');
+                connectBtn.disabled = false;
+                disconnectBtn.disabled = true;
+                startQueryBtn.disabled = true;
+            }
+        }
+        
+        // 진행률 표시
+        function showProgress() {
+            document.getElementById('progressContainer').style.display = 'block';
+        }
+        
+        function hideProgress() {
+            document.getElementById('progressContainer').style.display = 'none';
+        }
+        
+        function updateProgress(percentage) {
+            const progressBar = document.getElementById('progressBar');
+            progressBar.style.width = percentage + '%';
+            progressBar.textContent = Math.round(percentage) + '%';
+        }
+        
+        // 로그 추가
+        function addLog(message, type = 'info') {
+            const logContainer = document.getElementById('logContainer');
+            const logEntry = document.createElement('div');
+            logEntry.className = `log-entry log-${type}`;
+            
+            const timestamp = new Date().toLocaleTimeString();
+            logEntry.innerHTML = `<span class="text-muted">[${timestamp}]</span> ${message}`;
+            
+            logContainer.appendChild(logEntry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+            
+            // 로그가 너무 많으면 오래된 것 제거
+            if (logContainer.children.length > 100) {
+                logContainer.removeChild(logContainer.firstChild);
+            }
+        }
+        
+        // 로그 초기화
+        function clearLogs() {
+            document.getElementById('logContainer').innerHTML = '';
+        }
+        
+        // 섹션 토글
+        function toggleSection(sectionId) {
+            const section = document.getElementById(sectionId);
+            const header = section.previousElementSibling;
+            
+            if (section.style.display === 'none') {
+                section.style.display = 'block';
+                header.classList.remove('collapsed');
+            } else {
+                section.style.display = 'none';
+                header.classList.add('collapsed');
+            }
+        }
+        
+        // 페이지 로드 시 초기화
+        window.onload = function() {
+            initializeMap();
+            setDefaultTimeRange(); // 기본 시간 범위 설정
+            addLog('시스템 준비 완료', 'success');
+        };
+        
+        // 애니메이션 초기화 함수
+        function initializeAnimation() {
+            if (!animationController) {
+                // 동일한 deckOverlay 인스턴스 전달
+                animationController = new VesselAnimationController(map, window.deckOverlay || deckOverlay, trackStore);
+                animationController.initialize();
+                addLog('애니메이션 컨트롤러 초기화 완료', 'success');
+            }
+        }
+        
+        // 디버그 함수 (콘솔에서 debugTrackStore() 실행)
+        window.debugTrackStore = function() {
+            const state = trackStore.getState();
+            console.log('=== Track Store Debug ===');
+            console.log('Total vessels:', state.totalVessels);
+            console.log('Total points:', state.totalPoints);
+            console.log('Animation time:', new Date(state.animation.currentTime));
+            console.log('Time range:', new Date(state.animation.startTime), 'to', new Date(state.animation.endTime));
+            console.log('Viewport:', state.viewport);
+            console.log('Visible vessels:', trackStore.getVisibleVessels().length);
+            console.log('======================');
+        };
+    </script>
+</body>
+</html>

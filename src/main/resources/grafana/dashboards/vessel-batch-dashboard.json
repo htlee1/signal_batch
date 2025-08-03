@@ -1,0 +1,70 @@
+{
+  "dashboard": {
+    "title": "Vessel Batch Processing Dashboard",
+    "panels": [
+      {
+        "title": "Job Execution Status",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(batch_job_completed_total[5m])",
+            "legendFormat": "{{job_name}} - {{status}}"
+          }
+        ]
+      },
+      {
+        "title": "Processing Throughput",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(batch_job_records_read_total[5m])",
+            "legendFormat": "Read"
+          },
+          {
+            "expr": "rate(batch_job_records_write_total[5m])",
+            "legendFormat": "Write"
+          }
+        ]
+      },
+      {
+        "title": "Error Rate",
+        "type": "singlestat",
+        "targets": [
+          {
+            "expr": "rate(batch_job_records_skip_total[5m]) / rate(batch_job_records_read_total[5m]) * 100",
+            "format": "percent"
+          }
+        ]
+      },
+      {
+        "title": "Memory Usage",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "batch_memory_used_bytes / batch_memory_max_bytes * 100",
+            "legendFormat": "Usage %"
+          }
+        ]
+      },
+      {
+        "title": "Database Operations",
+        "type": "heatmap",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.99, batch_database_operation_duration_seconds_bucket)",
+            "legendFormat": "{{operation}} - {{table}}"
+          }
+        ]
+      },
+      {
+        "title": "Active Jobs",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "batch_job_active"
+          }
+        ]
+      }
+    ]
+  }
+}

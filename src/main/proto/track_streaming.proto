@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+package gc.mda.signal_batch.proto;
+
+option java_package = "gc.mda.signal_batch.proto";
+option java_multiple_files = true;
+
+// 압축된 선박 궤적 메시지
+message CompactVesselTrackProto {
+    string vessel_id = 1;
+    string sig_src_cd = 2;
+    string target_id = 3;
+    int32 chunk_index = 4;
+    
+    // 좌표 배열 (델타 인코딩)
+    repeated sint32 delta_lon = 5;  // 첫 좌표는 절대값, 나머지는 델타
+    repeated sint32 delta_lat = 6;
+    
+    // 시간 배열 (초 단위 델타)
+    repeated uint32 delta_time = 7; // 첫 시간은 epoch seconds, 나머지는 델타
+    
+    // 속도 배열 (0.1 knot 단위)
+    repeated uint32 speeds = 8;
+    
+    // 통계
+    double total_distance = 9;
+    double avg_speed = 10;
+    double max_speed = 11;
+}
+
+// 청크 응답 메시지
+message ChunkedTrackResponseProto {
+    string query_id = 1;
+    int32 chunk_index = 2;
+    int32 total_chunks = 3;
+    int64 time_range_start = 4;  // epoch seconds
+    int64 time_range_end = 5;
+    repeated CompactVesselTrackProto tracks = 6;
+    bool is_last_chunk = 7;
+    
+    // 통계
+    int32 track_count = 8;
+    double chunk_size_kb = 9;
+}

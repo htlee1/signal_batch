@@ -1,0 +1,1197 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chunked GIS Streaming with Vessel Animation</title>
+    
+    <!-- CSS -->
+    <link href="/libs/css/maplibre-gl.css" rel="stylesheet">
+    <link href="/libs/css/bootstrap.min.css" rel="stylesheet">
+    <link href="/libs/css/bootstrap-icons.css" rel="stylesheet">
+    
+    <!-- JS -->
+    <script src="/libs/js/sockjs.min.js"></script>
+    <script src="/libs/js/stomp.min.js"></script>
+    <script src="/libs/js/maplibre-gl.js"></script>
+    <script src="/libs/js/deck.gl.min.js"></script>
+    
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+        
+        #mapContainer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100vh;
+            background: #1a1a1a;
+        }
+        
+        .control-panel {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            z-index: 1000;
+            max-width: 380px;
+            min-width: 350px;
+        }
+        
+        .stats-panel {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            z-index: 1000;
+            min-width: 250px;
+        }
+        
+        .timeline-panel {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(255, 255, 255, 0.95);
+            padding: 15px 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            z-index: 1000;
+            min-width: 600px;
+        }
+        
+        .timeline-controls {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 10px;
+        }
+        
+        .timeline-slider {
+            flex: 1;
+            margin: 0 10px;
+        }
+        
+        .time-display {
+            font-family: monospace;
+            font-size: 14px;
+            min-width: 150px;
+            text-align: center;
+        }
+        
+        .progress {
+            height: 25px;
+            margin: 15px 0;
+        }
+        
+        .stat-card {
+            background: #f8f9fa;
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 8px;
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #007bff;
+            margin: 2px 0;
+        }
+        
+        .stat-label {
+            font-size: 12px;
+            color: #6c757d;
+        }
+        
+        .form-section {
+            margin-bottom: 15px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #e9ecef;
+        }
+        
+        .legend {
+            position: absolute;
+            bottom: 120px;
+            right: 10px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            z-index: 1000;
+        }
+        
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin: 6px 0;
+        }
+        
+        .legend-color {
+            width: 24px;
+            height: 4px;
+            margin-right: 8px;
+            border-radius: 2px;
+        }
+        
+        .vessel-icon {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        
+        .log-panel {
+            position: absolute;
+            bottom: 120px;
+            left: 10px;
+            width: calc(40% - 20px);
+            max-width: 600px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            z-index: 1000;
+            max-height: 250px;
+            overflow-y: auto;
+        }
+        
+        .log-entry {
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 11px;
+            padding: 2px 4px;
+            margin: 1px 0;
+        }
+        
+        .log-info { color: #004085; }
+        .log-success { color: #155724; background: #d4edda; }
+        .log-error { color: #721c24; background: #f8d7da; }
+        .log-chunk { color: #856404; background: #fff3cd; }
+        
+        .speed-control {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .btn-speed {
+            padding: 4px 8px;
+            font-size: 12px;
+        }
+        
+        .render-options {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 6px;
+            margin-top: 10px;
+        }
+        
+        #vesselTooltip {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            z-index: 9999;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="mapContainer"></div>
+    
+    <!-- 제어 패널 -->
+    <div class="control-panel">
+        <h5 class="mb-3">
+            <i class="bi bi-globe2"></i> Chunked GIS + Animation
+        </h5>
+        
+        <!-- 연결 제어 -->
+        <div class="form-section">
+            <div class="btn-group w-100" role="group">
+                <button id="connectBtn" class="btn btn-sm btn-success" onclick="connect()">
+                    <i class="bi bi-plug"></i> 연결
+                </button>
+                <button id="disconnectBtn" class="btn btn-sm btn-danger" onclick="disconnect()" disabled>
+                    <i class="bi bi-plug-fill"></i> 연결 해제
+                </button>
+            </div>
+        </div>
+        
+        <!-- 시간 설정 -->
+        <div class="form-section">
+            <div class="row g-2">
+                <div class="col-6">
+                    <label class="form-label small">시작 시간</label>
+                    <input type="datetime-local" class="form-control form-control-sm" id="startTime">
+                </div>
+                <div class="col-6">
+                    <label class="form-label small">종료 시간</label>
+                    <input type="datetime-local" class="form-control form-control-sm" id="endTime">
+                </div>
+            </div>
+            
+            <div class="mt-2">
+                <button class="btn btn-sm btn-outline-secondary" onclick="setTimeRange(1)">1시간</button>
+                <button class="btn btn-sm btn-outline-secondary" onclick="setTimeRange(6)">6시간</button>
+                <button class="btn btn-sm btn-outline-secondary" onclick="setTimeRange(24)">1일</button>
+                <button class="btn btn-sm btn-outline-secondary" onclick="setTimeRange(72)">3일</button>
+                <button class="btn btn-sm btn-outline-secondary" onclick="setTimeRange(168)">7일</button>
+            </div>
+        </div>
+        
+        <!-- 영역 설정 -->
+        <div class="form-section">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <label class="form-label small mb-0">현재 뷰포트</label>
+                <span class="badge bg-primary" id="currentZoom">Zoom: 6</span>
+            </div>
+            <div class="row g-2">
+                <div class="col-6">
+                    <input type="number" class="form-control form-control-sm" id="minLon" value="124" placeholder="Min Lon" readonly>
+                </div>
+                <div class="col-6">
+                    <input type="number" class="form-control form-control-sm" id="maxLon" value="132" placeholder="Max Lon" readonly>
+                </div>
+            </div>
+            <div class="row g-2 mt-1">
+                <div class="col-6">
+                    <input type="number" class="form-control form-control-sm" id="minLat" value="33" placeholder="Min Lat" readonly>
+                </div>
+                <div class="col-6">
+                    <input type="number" class="form-control form-control-sm" id="maxLat" value="38" placeholder="Max Lat" readonly>
+                </div>
+            </div>
+            <div class="small text-muted mt-1">
+                <i class="bi bi-info-circle"></i> 현재 맵 뷰포트와 줌 레벨을 사용합니다
+            </div>
+        </div>
+        
+        <!-- 렌더링 옵션 -->
+        <div class="form-section">
+            <h6 class="mb-2">렌더링 옵션</h6>
+            <div class="render-options">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="showTracks" checked>
+                    <label class="form-check-label small" for="showTracks">궤적 표시</label>
+                </div>
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="showVessels" checked>
+                    <label class="form-check-label small" for="showVessels">선박 아이콘 표시</label>
+                </div>
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="colorBySpeed" checked>
+                    <label class="form-check-label small" for="colorBySpeed">속도별 색상</label>
+                </div>
+                <div class="mt-2">
+                    <label class="form-label small">궤적 투명도</label>
+                    <input type="range" class="form-range" id="trackOpacity" min="0" max="100" value="60">
+                </div>
+            </div>
+        </div>
+        
+        <!-- 쿼리 실행 -->
+        <button id="startBtn" class="btn btn-primary w-100" onclick="startQuery()" disabled>
+            <i class="bi bi-play-circle"></i> 스트리밍 시작
+        </button>
+        <button id="cancelBtn" class="btn btn-warning w-100 mt-2" onclick="cancelQuery()" style="display: none;">
+            <i class="bi bi-stop-circle"></i> 취소
+        </button>
+        
+        <!-- 진행률 -->
+        <div class="progress mt-3" style="display: none;" id="progressContainer">
+            <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                 id="progressBar" style="width: 0%">0%</div>
+        </div>
+    </div>
+    
+    <!-- 통계 패널 -->
+    <div class="stats-panel">
+        <h6 class="mb-3"><i class="bi bi-speedometer2"></i> 실시간 통계</h6>
+        
+        <div class="stat-card">
+            <div class="stat-label">청크 수신</div>
+            <div class="stat-value" id="chunksReceived">0</div>
+        </div>
+        
+        <div class="stat-card">
+            <div class="stat-label">선박 수</div>
+            <div class="stat-value" id="vesselCount">0</div>
+        </div>
+        
+        <div class="stat-card">
+            <div class="stat-label">포인트 수</div>
+            <div class="stat-value" id="pointCount">0</div>
+        </div>
+        
+        <div class="stat-card">
+            <div class="stat-label">데이터 크기</div>
+            <div class="stat-value" id="dataSize">0</div>
+            <div class="stat-label">KB</div>
+        </div>
+        
+        <div class="stat-card">
+            <div class="stat-label">처리 시간</div>
+            <div class="stat-value" id="processTime">0</div>
+            <div class="stat-label">초</div>
+        </div>
+    </div>
+    
+    <!-- 타임라인 패널 -->
+    <div class="timeline-panel" style="display: none;" id="timelinePanel">
+        <button class="btn btn-sm btn-close position-absolute" style="top: 10px; right: 10px;" onclick="resetAll()" title="닫기"></button>
+        <div class="timeline-controls">
+            <button class="btn btn-sm btn-primary" id="playBtn" onclick="togglePlay()">
+                <i class="bi bi-play-fill"></i>
+            </button>
+            
+            <div class="speed-control">
+                <label class="small mb-0">속도:</label>
+                <button class="btn btn-sm btn-outline-secondary btn-speed" onclick="setSpeed(0.5)">0.5x</button>
+                <button class="btn btn-sm btn-secondary btn-speed" onclick="setSpeed(1)">1x</button>
+                <button class="btn btn-sm btn-outline-secondary btn-speed" onclick="setSpeed(2)">2x</button>
+                <button class="btn btn-sm btn-outline-secondary btn-speed" onclick="setSpeed(5)">5x</button>
+                <button class="btn btn-sm btn-outline-secondary btn-speed" onclick="setSpeed(50)">50x</button>
+                <button class="btn btn-sm btn-outline-secondary btn-speed" onclick="setSpeed(100)">100x</button>
+                <button class="btn btn-sm btn-outline-secondary btn-speed" onclick="setSpeed(500)">500x</button>
+            </div>
+            
+            <div class="time-display">
+                <div id="currentDateDisplay" style="font-size: 12px; color: #6c757d;">----/--/--</div>
+                <div id="currentTimeDisplay">--:--:--</div>
+            </div>
+        </div>
+        
+        <input type="range" class="form-range timeline-slider" 
+               id="timeSlider" min="0" max="100" value="0">
+        
+        <div class="d-flex justify-content-between small text-muted">
+            <span id="startTimeDisplay">--:--</span>
+            <span id="endTimeDisplay">--:--</span>
+        </div>
+    </div>
+    
+    <!-- 범례 -->
+    <div class="legend" style="display: none;" id="legend">
+        <h6 class="mb-2">속도 범례</h6>
+        <div class="legend-item">
+            <div class="legend-color" style="background: #1e90ff;"></div>
+            <span>0-5 knots</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background: #00ff00;"></div>
+            <span>5-10 knots</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background: #ffff00;"></div>
+            <span>10-15 knots</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background: #ff8c00;"></div>
+            <span>15-20 knots</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background: #ff0000;"></div>
+            <span>20+ knots</span>
+        </div>
+        
+        <hr class="my-2">
+        <h6 class="mb-2">선박 아이콘</h6>
+        <div class="legend-item">
+            <div class="vessel-icon" style="background: #00ff00;"></div>
+            <span>이동중</span>
+        </div>
+        <div class="legend-item">
+            <div class="vessel-icon" style="background: #ffff00;"></div>
+            <span>저속</span>
+        </div>
+        <div class="legend-item">
+            <div class="vessel-icon" style="background: #ff0000;"></div>
+            <span>정지</span>
+        </div>
+    </div>
+    
+    <!-- 로그 패널 -->
+    <div class="log-panel">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <h6 class="mb-0"><i class="bi bi-terminal"></i> 로그</h6>
+            <button class="btn btn-sm btn-outline-secondary" onclick="clearLog()">Clear</button>
+        </div>
+        <div id="logContainer"></div>
+    </div>
+    
+    <!-- 툴팁 -->
+    <div id="vesselTooltip"></div>
+
+    <script>
+        // 전역 변수
+        let map;
+        let deckOverlay;
+        let stompClient = null;
+        let currentQueryId = null;
+        let startTime = null;
+        
+        // 데이터 저장
+        const vesselData = new Map();
+        const vesselChunks = new Map(); // 청크 단위 저장 (병합 불필요)
+        const vesselTimeIndex = new Map();
+        let chunksReceived = 0;
+        let totalDataSize = 0;
+  let totalPoints = 0;
+        
+        // 애니메이션 상태
+        let animationState = {
+            playing: false,
+            currentTime: 0,
+            startTime: 0,
+            endTime: 0,
+            speed: 1,
+            lastFrameTime: 0
+        };
+        
+        let animationFrame = null;
+        let updateLayersTimer = null; // 레이어 업데이트 타이머
+        
+        // 초기화
+        window.onload = function() {
+            initializeMap();
+            setDefaultTimeRange();
+            log('시스템 준비 완료', 'success');
+        };
+        
+        // 맵 초기화
+        function initializeMap() {
+            map = new maplibregl.Map({
+                container: 'mapContainer',
+                style: {
+                    version: 8,
+                    sources: {
+                        'raster-tiles': {
+                            type: 'raster',
+                            tiles: ['/api/tiles/enc/{z}/{x}/{y}.webp'],
+                            tileSize: 256,
+                            attribution: 'Local Tile Server'
+                        }
+                    },
+                    layers: [{
+                        id: 'simple-tiles',
+                        type: 'raster',
+                        source: 'raster-tiles',
+                        minzoom: 0,
+                        maxzoom: 22
+                    }]
+                },
+                center: [128, 35.5],
+                zoom: 6
+            });
+            
+            deckOverlay = new deck.MapboxOverlay({
+                interleaved: true,
+                layers: []
+            });
+            
+            map.addControl(deckOverlay);
+            map.addControl(new maplibregl.NavigationControl());
+            
+            // 줌 레벨 내 맵 이동 시 표시 업데이트
+            map.on('moveend', updateViewportDisplay);
+            map.on('zoomend', updateViewportDisplay);
+        }
+        
+        // 뷰포트 표시 업데이트
+        function updateViewportDisplay() {
+            const bounds = map.getBounds();
+            const zoom = Math.floor(map.getZoom());
+            
+            document.getElementById('currentZoom').textContent = `Zoom: ${zoom}`;
+            document.getElementById('minLon').value = bounds.getWest().toFixed(4);
+            document.getElementById('maxLon').value = bounds.getEast().toFixed(4);
+            document.getElementById('minLat').value = bounds.getSouth().toFixed(4);
+            document.getElementById('maxLat').value = bounds.getNorth().toFixed(4);
+        }
+        
+        // 시간 설정
+        function setDefaultTimeRange() {
+            const now = new Date();
+            const adjusted = new Date(now.getTime() - 15 * 60 * 1000); // 15분 전
+            const sixHoursAgo = new Date(adjusted.getTime() - 6 * 60 * 60 * 1000);
+            
+            document.getElementById('startTime').value = formatDateTime(sixHoursAgo);
+            document.getElementById('endTime').value = formatDateTime(adjusted);
+        }
+        
+        function formatDateTime(date) {
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            const hours = String(date.getHours()).padStart(2, '0');
+            const minutes = String(date.getMinutes()).padStart(2, '0');
+            return `${year}-${month}-${day}T${hours}:${minutes}`;
+        }
+        
+        function setTimeRange(hours) {
+            const now = new Date();
+            const adjusted = new Date(now.getTime() - 15 * 60 * 1000);
+            const start = new Date(adjusted.getTime() - hours * 60 * 60 * 1000);
+            
+            document.getElementById('startTime').value = formatDateTime(start);
+            document.getElementById('endTime').value = formatDateTime(adjusted);
+        }
+        
+        // WebSocket 연결
+        function connect() {
+            const socket = new SockJS('/ws-tracks');
+            stompClient = Stomp.over(socket);
+            stompClient.debug = null; // 디버그 끄기
+            
+            stompClient.connect({}, (frame) => {
+                log('WebSocket 연결 성공', 'success');
+                updateConnectionStatus(true);
+                
+                // 구독
+                stompClient.subscribe('/user/queue/tracks/response', handleResponse);
+                stompClient.subscribe('/user/queue/tracks/status', handleStatus);
+                stompClient.subscribe('/user/queue/tracks/chunk', handleChunk);
+                stompClient.subscribe('/user/queue/errors', handleError);
+            });
+        }
+        
+        function disconnect() {
+            if (stompClient && stompClient.connected) {
+                stompClient.disconnect(() => {
+                    log('WebSocket 연결 해제', 'info');
+                    updateConnectionStatus(false);
+                });
+            }
+        }
+        
+        // 쿼리 시작
+        function startQuery() {
+            // 초기화
+            vesselData.clear();
+            vesselChunks.clear();
+            vesselTimeIndex.clear();
+            chunksReceived = 0;
+            totalDataSize = 0;
+            totalPoints = 0;
+            startTime = Date.now();
+            updateStats();
+            
+            // 시간 값 가져오기 (optimized와 동일하게)
+            const startTimeValue = document.getElementById('startTime').value + ':00';
+            const endTimeValue = document.getElementById('endTime').value + ':00';
+            
+            // 현재 맵 뷰포트와 줌 레벨 가져오기
+            const bounds = map.getBounds();
+            const zoom = Math.floor(map.getZoom());
+            
+            const request = {
+                startTime: startTimeValue,
+                endTime: endTimeValue,
+                viewport: {
+                    minLon: bounds.getWest(),
+                    maxLon: bounds.getEast(),
+                    minLat: bounds.getSouth(),
+                    maxLat: bounds.getNorth()
+                },
+                zoomLevel: zoom,
+                chunkedMode: true,
+                chunkSize: 20000
+            };
+            
+            // 뷰포트 정보를 입력 필드에 표시 (참고용)
+            document.getElementById('minLon').value = bounds.getWest().toFixed(4);
+            document.getElementById('maxLon').value = bounds.getEast().toFixed(4);
+            document.getElementById('minLat').value = bounds.getSouth().toFixed(4);
+            document.getElementById('maxLat').value = bounds.getNorth().toFixed(4);
+            
+            // 애니메이션 시간 설정
+            animationState.startTime = new Date(request.startTime).getTime();
+            animationState.endTime = new Date(request.endTime).getTime();
+            animationState.currentTime = animationState.startTime;
+            
+            updateTimeline();
+            
+            log('쿼리 시작...', 'info');
+            log(`요청 시간: ${startTimeValue} ~ ${endTimeValue}`, 'info');
+            log(`현재 줌 레벨: ${zoom}`, 'info');
+            log(`뷰포트: [${bounds.getWest().toFixed(4)}, ${bounds.getSouth().toFixed(4)}] - [${bounds.getEast().toFixed(4)}, ${bounds.getNorth().toFixed(4)}]`, 'info');
+            stompClient.send('/app/tracks/query', {}, JSON.stringify(request));
+            
+            document.getElementById('startBtn').style.display = 'none';
+            document.getElementById('cancelBtn').style.display = 'block';
+            document.getElementById('progressContainer').style.display = 'block';
+        }
+        
+        // 청크 처리 (최적화된 압축 데이터)
+        function handleChunk(message) {
+            const parseStart = performance.now();
+            const chunk = JSON.parse(message.body);
+            
+            chunksReceived++;
+            totalDataSize += message.body.length / 1024;
+            
+            // 압축된 트랙 처리
+            if (chunk.compactTracks) {
+                chunk.compactTracks.forEach(track => {
+                    const vesselId = track.vesselId;
+                    
+                    // 청크 단위로 저장 (병합하지 않음)
+                    if (!vesselChunks.has(vesselId)) {
+                        vesselChunks.set(vesselId, {
+                            sigSrcCd: track.sigSrcCd,
+                            targetId: track.targetId,
+                            chunks: [],
+                            cachedPath: null,
+                            totalDistance: 0,
+                            avgSpeed: 0,
+                            maxSpeed: 0
+                        });
+                    }
+                    
+                    const vessel = vesselChunks.get(vesselId);
+                    
+                    // 청크 추가 (병합 없음)
+                    vessel.chunks.push({
+                        geometry: track.geometry,
+                        timestamps: track.timestamps,
+                        speeds: track.speeds,
+                        pointCount: track.geometry.length
+                    });
+                    
+                    // 캐시 무효화
+                    vessel.cachedPath = null;
+                    
+                    // 통계 업데이트
+                    vessel.totalDistance += track.totalDistance || 0;
+                    vessel.maxSpeed = Math.max(vessel.maxSpeed, track.maxSpeed || 0);
+                    vessel.avgSpeed = track.avgSpeed || 0;
+                    
+                    totalPoints += track.geometry.length;
+                });
+                
+                // 시간 인덱스 구축 (lazy)
+                // buildTimeIndex();
+            }
+            
+            const parseTime = performance.now() - parseStart;
+            
+            updateStats();
+            
+            // 첫 청크 수신 시 타임라인 표시 및 자동 재생
+            if (chunksReceived === 1) {
+                document.getElementById('timelinePanel').style.display = 'block';
+                document.getElementById('legend').style.display = 'block';
+                setSpeed(50); // 50x 속도 설정
+                animationState.playing = true;
+                document.getElementById('playBtn').innerHTML = '<i class="bi bi-pause-fill"></i>';
+                startAnimation();
+            }
+            
+            // 주기적 레이어 업데이트 (1초마다)
+            if (!updateLayersTimer) {
+                updateLayersTimer = setInterval(() => {
+                    updateLayers();
+                }, 1000);
+            }
+            
+            // 통계 정보 추가
+            const stats = chunk.stats || {};
+            const timeProgress = stats.timeProgress || 0;
+            const vesselProgress = stats.vesselProgress || 0;
+            
+            log(`청크 ${chunk.chunkIndex + 1}/${chunk.totalChunks || '?'}: ${chunk.compactTracks?.length || 0}척, ${totalPoints.toLocaleString()}포인트 | 시간: ${timeProgress.toFixed(1)}% | 선박: ${vesselProgress.toFixed(1)}%`, 'chunk');
+        }
+        
+        // 시간 인덱스 구축
+        function buildTimeIndex() {
+            vesselTimeIndex.clear();
+            
+            vesselData.forEach((vessel, vesselId) => {
+                vessel.timestamps.forEach((timestamp, idx) => {
+                    const time = new Date(timestamp).getTime();
+                    const minute = Math.floor(time / 60000) * 60000; // 분 단위
+                    
+                    if (!vesselTimeIndex.has(minute)) {
+                        vesselTimeIndex.set(minute, []);
+                    }
+                    
+                    vesselTimeIndex.get(minute).push({
+                        vesselId,
+                        idx,
+                        time
+                    });
+                });
+            });
+        }
+        
+        // 레이어 업데이트
+        function updateLayers() {
+            const layers = [];
+            
+            // 궤적 레이어
+            if (document.getElementById('showTracks').checked) {
+                const pathData = [];
+                const opacity = parseInt(document.getElementById('trackOpacity').value) / 100;
+                const colorBySpeed = document.getElementById('colorBySpeed').checked;
+                
+                vesselChunks.forEach(vessel => {
+                    // 캐시된 경로가 없으면 생성
+                    if (!vessel.cachedPath) {
+                        vessel.cachedPath = createVesselPath(vessel);
+                    }
+                    
+                    if (vessel.cachedPath.geometry.length > 1) {
+                        const timestamps = vessel.cachedPath.timestamps;
+                        pathData.push({
+                            path: vessel.cachedPath.geometry,
+                            color: colorBySpeed ? getSpeedColor(vessel.avgSpeed) : [0, 255, 0],
+                            width: 2,
+                            vesselId: `${vessel.sigSrcCd}_${vessel.targetId}`,
+                            avgSpeed: vessel.avgSpeed,
+                            distance: vessel.totalDistance,
+                            startTime: timestamps[0],
+                            endTime: timestamps[timestamps.length - 1]
+                        });
+                    }
+                });
+                
+                layers.push(new deck.PathLayer({
+                    id: 'vessel-tracks',
+                    data: pathData,
+                    pickable: true,
+                    widthScale: 1,
+                    widthMinPixels: 1,
+                    widthMaxPixels: 3,
+                    getPath: d => d.path,
+                    getColor: d => [...d.color, opacity * 255],
+                    getWidth: d => d.width,
+                    onHover: showTooltip
+                }));
+                
+                document.getElementById('legend').style.display = 'block';
+            }
+            
+            // 선박 아이콘 레이어
+            if (document.getElementById('showVessels').checked && animationState.currentTime) {
+                const vesselPositions = getVesselPositionsAtTime(animationState.currentTime);
+                
+                layers.push(new deck.ScatterplotLayer({
+                    id: 'vessel-icons',
+                    data: vesselPositions,
+                    pickable: true,
+                    opacity: 0.8,
+                    stroked: true,
+                    filled: true,
+                    radiusScale: 1,
+                    radiusMinPixels: 3,
+                    radiusMaxPixels: 8,
+                    getPosition: d => d.position,
+                    // getFillColor: d => getVesselColor(d.speed),
+                    getFillColor: [255, 0, 0],
+                    getLineColor: [255, 255, 255],
+                    getRadius: 5,
+                    onHover: showVesselTooltip
+                }));
+            }
+            
+            deckOverlay.setProps({ layers });
+        }
+        
+        // 특정 시간의 선박 위치 계산
+        function getVesselPositionsAtTime(targetTime) {
+            const positions = [];
+            
+            vesselChunks.forEach(vessel => {
+                const pos = interpolatePosition(vessel, targetTime);
+                if (pos) {
+                    positions.push({
+                        vesselId: `${vessel.sigSrcCd}_${vessel.targetId}`,
+                        position: [pos.lon, pos.lat],
+                        speed: pos.speed || vessel.avgSpeed
+                    });
+                }
+            });
+            
+            return positions;
+        }
+        
+        // 위치 보간 (청크 기반)
+        function interpolatePosition(vessel, targetTime) {
+            // 캐시된 경로가 없으면 생성
+            if (!vessel.cachedPath) {
+                vessel.cachedPath = createVesselPath(vessel);
+            }
+            
+            const timestamps = vessel.cachedPath.timestamps;
+            if (!timestamps || timestamps.length === 0) return null;
+            
+            // 시간을 밀리초로 변환
+            const times = timestamps.map(t => new Date(t).getTime());
+            const firstTime = times[0];
+            const lastTime = times[times.length - 1];
+            
+            if (targetTime < firstTime || targetTime > lastTime) return null;
+            
+            // 이진 탐색으로 인덱스 찾기
+            let left = 0;
+            let right = times.length - 1;
+            
+            while (left < right - 1) {
+                const mid = Math.floor((left + right) / 2);
+                if (times[mid] <= targetTime) {
+                    left = mid;
+                } else {
+                    right = mid;
+                }
+            }
+            
+            if (left === right) {
+                return {
+                    lon: vessel.cachedPath.geometry[left][0],
+                    lat: vessel.cachedPath.geometry[left][1],
+                    speed: vessel.cachedPath.speeds[left]
+                };
+            }
+            
+            // 선형 보간
+            const t1 = times[left];
+            const t2 = times[right];
+            const ratio = (targetTime - t1) / (t2 - t1);
+            
+            return {
+                lon: vessel.cachedPath.geometry[left][0] + (vessel.cachedPath.geometry[right][0] - vessel.cachedPath.geometry[left][0]) * ratio,
+                lat: vessel.cachedPath.geometry[left][1] + (vessel.cachedPath.geometry[right][1] - vessel.cachedPath.geometry[left][1]) * ratio,
+                speed: vessel.cachedPath.speeds[left] + (vessel.cachedPath.speeds[right] - vessel.cachedPath.speeds[left]) * ratio
+            };
+        }
+        
+        // 선박 경로 생성 (렌더링 시점에만)
+        function createVesselPath(vessel) {
+            // flatMap으로 가상 병합 (메모리 복사 없음)
+            return {
+                geometry: vessel.chunks.flatMap(c => c.geometry),
+                timestamps: vessel.chunks.flatMap(c => c.timestamps),
+                speeds: vessel.chunks.flatMap(c => c.speeds)
+            };
+        }
+        
+        // 색상 함수
+        function getSpeedColor(speed) {
+            if (speed < 5) return [30, 144, 255];
+            if (speed < 10) return [0, 255, 0];
+            if (speed < 15) return [255, 255, 0];
+            if (speed < 20) return [255, 140, 0];
+            return [255, 0, 0];
+        }
+        
+        function getVesselColor(speed) {
+            if (speed < 1) return [255, 0, 0];      // 정지
+            if (speed < 5) return [255, 255, 0];    // 저속
+            return [0, 255, 0];                     // 이동중
+        }
+        
+        // 툴팁
+        function showTooltip(info) {
+            if (info.object) {
+                const tooltip = document.getElementById('vesselTooltip');
+                const startDate = new Date(info.object.startTime);
+                const endDate = new Date(info.object.endTime);
+                tooltip.innerHTML = `
+                    <strong>선박 ID:</strong> ${info.object.vesselId}<br>
+                    <strong>평균 속도:</strong> ${info.object.avgSpeed.toFixed(1)} knots<br>
+                    <strong>이동 거리:</strong> ${info.object.distance.toFixed(1)} nm<br>
+                    <strong>시작 시간:</strong> ${startDate.toLocaleString('ko-KR')}<br>
+                    <strong>종료 시간:</strong> ${endDate.toLocaleString('ko-KR')}
+                `;
+                tooltip.style.left = info.x + 10 + 'px';
+                tooltip.style.top = info.y + 10 + 'px';
+                tooltip.style.display = 'block';
+            } else {
+                document.getElementById('vesselTooltip').style.display = 'none';
+            }
+        }
+        
+        function showVesselTooltip(info) {
+            if (info.object) {
+                const tooltip = document.getElementById('vesselTooltip');
+                tooltip.innerHTML = `
+                    <strong>선박 ID:</strong> ${info.object.vesselId}<br>
+                    <strong>현재 속도:</strong> ${info.object.speed.toFixed(1)} knots<br>
+                    <strong>위치:</strong> ${info.object.position[1].toFixed(4)}°N, ${info.object.position[0].toFixed(4)}°E
+                `;
+                tooltip.style.left = info.x + 10 + 'px';
+                tooltip.style.top = info.y + 10 + 'px';
+                tooltip.style.display = 'block';
+            } else {
+                document.getElementById('vesselTooltip').style.display = 'none';
+            }
+        }
+        
+        // 애니메이션 제어
+        function togglePlay() {
+            animationState.playing = !animationState.playing;
+            
+            const playBtn = document.getElementById('playBtn');
+            if (animationState.playing) {
+                playBtn.innerHTML = '<i class="bi bi-pause-fill"></i>';
+                startAnimation();
+            } else {
+                playBtn.innerHTML = '<i class="bi bi-play-fill"></i>';
+                stopAnimation();
+            }
+        }
+        
+        function startAnimation() {
+            animationState.lastFrameTime = performance.now();
+            animate();
+        }
+        
+        function stopAnimation() {
+            if (animationFrame) {
+                cancelAnimationFrame(animationFrame);
+                animationFrame = null;
+            }
+        }
+        
+        function animate() {
+            if (!animationState.playing) return;
+            
+            const now = performance.now();
+            const deltaTime = now - animationState.lastFrameTime;
+            animationState.lastFrameTime = now;
+            
+            // 시간 업데이트
+            animationState.currentTime += deltaTime * animationState.speed;
+            
+            // 루프
+            if (animationState.currentTime > animationState.endTime) {
+                animationState.currentTime = animationState.startTime;
+            }
+            
+            updateTimeline();
+            updateLayers();
+            
+            animationFrame = requestAnimationFrame(animate);
+        }
+        
+        function setSpeed(speed) {
+            animationState.speed = speed;
+            document.querySelectorAll('.btn-speed').forEach(btn => {
+                btn.classList.remove('btn-secondary');
+                btn.classList.add('btn-outline-secondary');
+            });
+            event.target.classList.remove('btn-outline-secondary');
+            event.target.classList.add('btn-secondary');
+        }
+        
+        // 타임라인 업데이트
+        function updateTimeline() {
+            if (!animationState.startTime || !animationState.endTime) return;
+            
+            const progress = (animationState.currentTime - animationState.startTime) / 
+                           (animationState.endTime - animationState.startTime) * 100;
+            
+            document.getElementById('timeSlider').value = progress;
+            
+            const currentDate = new Date(animationState.currentTime);
+            document.getElementById('currentDateDisplay').textContent = 
+                currentDate.toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' });
+            document.getElementById('currentTimeDisplay').textContent = 
+                currentDate.toLocaleTimeString();
+            document.getElementById('startTimeDisplay').textContent = 
+                new Date(animationState.startTime).toLocaleTimeString();
+            document.getElementById('endTimeDisplay').textContent = 
+                new Date(animationState.endTime).toLocaleTimeString();
+        }
+        
+        // 타임라인 슬라이더 이벤트
+        document.getElementById('timeSlider')?.addEventListener('input', (e) => {
+            const progress = parseFloat(e.target.value) / 100;
+            animationState.currentTime = animationState.startTime + 
+                (animationState.endTime - animationState.startTime) * progress;
+            updateTimeline();
+            updateLayers();
+        });
+        
+        // 상태 업데이트
+        function handleResponse(message) {
+            const response = JSON.parse(message.body);
+            if (response.status === 'STARTED') {
+                currentQueryId = response.queryId;
+            }
+        }
+        
+        function handleStatus(message) {
+            const status = JSON.parse(message.body);
+            
+            if (status.progressPercentage >= 0) {
+                const progressBar = document.getElementById('progressBar');
+                progressBar.style.width = status.progressPercentage + '%';
+                progressBar.textContent = Math.round(status.progressPercentage) + '%';
+            }
+            
+            if (status.status === 'COMPLETED') {
+                handleComplete();
+            }
+        }
+        
+        function handleError(message) {
+            log('에러: ' + message.body, 'error');
+        }
+        
+        function handleComplete() {
+            const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+            document.getElementById('processTime').textContent = duration;
+            
+            log(`완료! ${vesselChunks.size}척, ${duration}초 소요`, 'success');
+            
+            document.getElementById('startBtn').style.display = 'block';
+            document.getElementById('cancelBtn').style.display = 'none';
+            document.getElementById('progressContainer').style.display = 'none';
+            
+            // 타이머 정리
+            if (updateLayersTimer) {
+                clearInterval(updateLayersTimer);
+                updateLayersTimer = null;
+            }
+            
+            // 마지막 레이어 업데이트
+            updateLayers();
+            
+            // 맵 범위 조정
+            fitMapBounds();
+        }
+        
+        // 맵 범위 조정
+        function fitMapBounds() {
+            const bounds = new maplibregl.LngLatBounds();
+            let hasPoints = false;
+            
+            vesselChunks.forEach(vessel => {
+                if (!vessel.cachedPath) {
+                    vessel.cachedPath = createVesselPath(vessel);
+                }
+                vessel.cachedPath.geometry.forEach(point => {
+                    bounds.extend(point);
+                    hasPoints = true;
+                });
+            });
+            
+            if (hasPoints) {
+                map.fitBounds(bounds, { padding: 50 });
+            }
+        }
+        
+        // 통계 업데이트
+        function updateStats() {
+            document.getElementById('chunksReceived').textContent = chunksReceived;
+            document.getElementById('vesselCount').textContent = vesselChunks.size;
+            document.getElementById('pointCount').textContent = totalPoints.toLocaleString();
+            document.getElementById('dataSize').textContent = totalDataSize.toFixed(1);
+        }
+        
+        // 연결 상태
+        function updateConnectionStatus(connected) {
+            document.getElementById('connectBtn').disabled = connected;
+            document.getElementById('disconnectBtn').disabled = !connected;
+            document.getElementById('startBtn').disabled = !connected;
+        }
+        
+        // 로그
+        function log(message, type = 'info') {
+            const logContainer = document.getElementById('logContainer');
+            const entry = document.createElement('div');
+            entry.className = `log-entry log-${type}`;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logContainer.appendChild(entry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+            
+            if (logContainer.children.length > 50) {
+                logContainer.removeChild(logContainer.firstChild);
+            }
+        }
+        
+        function clearLog() {
+            document.getElementById('logContainer').innerHTML = '';
+        }
+        
+        // 전체 초기화
+        function resetAll() {
+            // 애니메이션 중지
+            stopAnimation();
+            animationState = {
+                playing: false,
+                currentTime: 0,
+                startTime: 0,
+                endTime: 0,
+                speed: 1,
+                lastFrameTime: 0
+            };
+            
+            // 데이터 초기화
+            vesselData.clear();
+            vesselChunks.clear();
+            vesselTimeIndex.clear();
+            chunksReceived = 0;
+            totalDataSize = 0;
+            totalPoints = 0;
+            
+            // 레이어 초기화
+            deckOverlay.setProps({ layers: [] });
+            
+            // UI 초기화
+            document.getElementById('timelinePanel').style.display = 'none';
+            document.getElementById('legend').style.display = 'none';
+            document.getElementById('startBtn').style.display = 'block';
+            document.getElementById('cancelBtn').style.display = 'none';
+            document.getElementById('progressContainer').style.display = 'none';
+            document.getElementById('progressBar').style.width = '0%';
+            document.getElementById('progressBar').textContent = '0%';
+            document.getElementById('playBtn').innerHTML = '<i class="bi bi-play-fill"></i>';
+            
+            // 통계 초기화
+            updateStats();
+            
+            // 로그 추가
+            log('시스템 초기화 완료', 'success');
+            
+            // 타이머 정리
+            if (updateLayersTimer) {
+                clearInterval(updateLayersTimer);
+                updateLayersTimer = null;
+            }
+        }
+        
+        function cancelQuery() {
+            if (currentQueryId) {
+                stompClient.send('/app/tracks/cancel/' + currentQueryId, {});
+            }
+            
+            // 타이머 정리
+            if (updateLayersTimer) {
+                clearInterval(updateLayersTimer);
+                updateLayersTimer = null;
+            }
+            
+            // 애니메이션 중지
+            stopAnimation();
+            animationState.playing = false;
+            document.getElementById('playBtn').innerHTML = '<i class="bi bi-play-fill"></i>';
+        }
+    </script>
+</body>
+</html>

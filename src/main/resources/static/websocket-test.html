@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vessel Track Streaming - STOMP WebSocket Test</title>
+    <script src="/libs/js/sockjs.min.js"></script>
+    <script src="/libs/js/stomp.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 2px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+        .controls {
+            margin: 20px 0;
+            padding: 20px;
+            background: #f9f9f9;
+            border-radius: 5px;
+        }
+        .control-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: inline-block;
+            width: 150px;
+            font-weight: bold;
+        }
+        input {
+            padding: 8px;
+            width: 200px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        .btn-primary {
+            background-color: #4CAF50;
+            color: white;
+        }
+        .btn-danger {
+            background-color: #f44336;
+            color: white;
+        }
+        .btn-info {
+            background-color: #2196F3;
+            color: white;
+        }
+        button:hover {
+            opacity: 0.8;
+        }
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .status {
+            margin: 20px 0;
+            padding: 15px;
+            border-radius: 5px;
+        }
+        .status.connected {
+            background-color: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        .status.disconnected {
+            background-color: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+        .progress {
+            margin: 20px 0;
+            height: 30px;
+            background-color: #f0f0f0;
+            border-radius: 15px;
+            overflow: hidden;
+        }
+        .progress-bar {
+            height: 100%;
+            background-color: #4CAF50;
+            width: 0%;
+            transition: width 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+        }
+        .results {
+            margin-top: 20px;
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            padding: 10px;
+            background: #f9f9f9;
+        }
+        .track-item {
+            padding: 10px;
+            margin: 5px 0;
+            background: white;
+            border: 1px solid #eee;
+            border-radius: 4px;
+        }
+        .track-item:hover {
+            background: #f5f5f5;
+        }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+        .stat-box {
+            padding: 15px;
+            background: #f9f9f9;
+            border-radius: 5px;
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #4CAF50;
+        }
+        .stat-label {
+            color: #666;
+            font-size: 14px;
+        }
+        .log {
+            margin-top: 20px;
+            padding: 10px;
+            background: #333;
+            color: #0f0;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚢 Vessel Track Streaming - STOMP WebSocket Test</h1>
+        
+        <div class="status disconnected" id="connectionStatus">
+            Disconnected
+        </div>
+        
+        <div class="controls">
+            <h3>Connection</h3>
+            <button id="connectBtn" class="btn-primary" onclick="connect()">Connect</button>
+            <button id="disconnectBtn" class="btn-danger" onclick="disconnect()" disabled>Disconnect</button>
+            
+            <h3>Query Parameters</h3>
+            <div class="control-group">
+                <label>Start Time:</label>
+                <input type="datetime-local" id="startTime" value="">
+            </div>
+            <div class="control-group">
+                <label>End Time:</label>
+                <input type="datetime-local" id="endTime" value="">
+            </div>
+            <div class="control-group">
+                <label>Chunk Size:</label>
+                <input type="number" id="chunkSize" value="500" min="100" max="5000">
+            </div>
+            
+            <h3>Viewport Filter (Optional)</h3>
+            <div class="control-group">
+                <label>Min Longitude:</label>
+                <input type="number" id="minLon" step="0.001" placeholder="124.0">
+                <label>Max Longitude:</label>
+                <input type="number" id="maxLon" step="0.001" placeholder="132.0">
+            </div>
+            <div class="control-group">
+                <label>Min Latitude:</label>
+                <input type="number" id="minLat" step="0.001" placeholder="33.0">
+                <label>Max Latitude:</label>
+                <input type="number" id="maxLat" step="0.001" placeholder="38.0">
+            </div>
+            
+            <h3>Actions</h3>
+            <button id="queryBtn" class="btn-primary" onclick="queryTracks()" disabled>Start Query</button>
+            <button id="cancelBtn" class="btn-danger" onclick="cancelQuery()" disabled>Cancel Query</button>
+            <button id="clearBtn" class="btn-info" onclick="clearResults()">Clear Results</button>
+        </div>
+        
+        <div class="progress">
+            <div class="progress-bar" id="progressBar">0%</div>
+        </div>
+        
+        <div class="stats">
+            <div class="stat-box">
+                <div class="stat-value" id="totalTracks">0</div>
+                <div class="stat-label">Total Tracks</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-value" id="chunksReceived">0</div>
+                <div class="stat-label">Chunks Received</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-value" id="elapsedTime">0s</div>
+                <div class="stat-label">Elapsed Time</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-value" id="queryStatus">-</div>
+                <div class="stat-label">Status</div>
+            </div>
+        </div>
+        
+        <h3>Received Tracks</h3>
+        <div class="results" id="results">
+            No data yet. Connect and start a query.
+        </div>
+        
+        <h3>Debug Log</h3>
+        <div class="log" id="log"></div>
+    </div>
+
+    <script>
+        let stompClient = null;
+        let currentQueryId = null;
+        let trackCount = 0;
+        let chunkCount = 0;
+        let startTime = null;
+        
+        // 초기 시간 설정 (현재 시간 - 1시간 ~ 현재 시간)
+        window.onload = function() {
+            const now = new Date();
+            const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+            
+            document.getElementById('startTime').value = formatDateTimeLocal(oneHourAgo);
+            document.getElementById('endTime').value = formatDateTimeLocal(now);
+        };
+        
+        function formatDateTimeLocal(date) {
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            const hours = String(date.getHours()).padStart(2, '0');
+            const minutes = String(date.getMinutes()).padStart(2, '0');
+            return `${year}-${month}-${day}T${hours}:${minutes}`;
+        }
+        
+        function log(message) {
+            const logDiv = document.getElementById('log');
+            const timestamp = new Date().toLocaleTimeString();
+            logDiv.innerHTML += `[${timestamp}] ${message}<br>`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+        
+        function connect() {
+            const socket = new SockJS('/ws-tracks');
+            stompClient = Stomp.over(socket);
+            
+            // 디버그 로깅 비활성화 (프로덕션에서)
+            stompClient.debug = function(str) {
+                log(str);
+            };
+            
+            stompClient.connect({}, function(frame) {
+                log('Connected: ' + frame);
+                setConnected(true);
+                
+                // 응답 구독
+                stompClient.subscribe('/user/queue/tracks/response', function(message) {
+                    const response = JSON.parse(message.body);
+                    log('Query response: ' + response.status);
+                    if (response.status === 'STARTED') {
+                        currentQueryId = response.queryId;
+                        startTime = new Date();
+                    }
+                });
+                
+                // 데이터 청크 구독
+                stompClient.subscribe('/user/queue/tracks/data', function(message) {
+                    const chunk = JSON.parse(message.body);
+                    handleTrackChunk(chunk);
+                });
+                
+                // 상태 업데이트 구독
+                stompClient.subscribe('/user/queue/tracks/status', function(message) {
+                    const status = JSON.parse(message.body);
+                    handleStatusUpdate(status);
+                });
+                
+                // 오류 구독
+                stompClient.subscribe('/user/queue/errors', function(message) {
+                    const error = JSON.parse(message.body);
+                    log('ERROR: ' + error.message);
+                    alert('Error: ' + error.message);
+                });
+            }, function(error) {
+                log('Connection error: ' + error);
+                setConnected(false);
+            });
+        }
+        
+        function disconnect() {
+            if (stompClient !== null) {
+                stompClient.disconnect();
+            }
+            setConnected(false);
+            log('Disconnected');
+        }
+        
+        function setConnected(connected) {
+            const statusDiv = document.getElementById('connectionStatus');
+            document.getElementById('connectBtn').disabled = connected;
+            document.getElementById('disconnectBtn').disabled = !connected;
+            document.getElementById('queryBtn').disabled = !connected;
+            
+            if (connected) {
+                statusDiv.textContent = 'Connected';
+                statusDiv.className = 'status connected';
+            } else {
+                statusDiv.textContent = 'Disconnected';
+                statusDiv.className = 'status disconnected';
+            }
+        }
+        
+        function queryTracks() {
+            // 초기화
+            trackCount = 0;
+            chunkCount = 0;
+            document.getElementById('results').innerHTML = '';
+            document.getElementById('progressBar').style.width = '0%';
+            document.getElementById('progressBar').textContent = '0%';
+            
+            // 요청 데이터 구성
+            const request = {
+                startTime: document.getElementById('startTime').value,
+                endTime: document.getElementById('endTime').value,
+                chunkSize: parseInt(document.getElementById('chunkSize').value)
+            };
+            
+            // Viewport 필터 (옵션)
+            const minLon = parseFloat(document.getElementById('minLon').value);
+            const maxLon = parseFloat(document.getElementById('maxLon').value);
+            const minLat = parseFloat(document.getElementById('minLat').value);
+            const maxLat = parseFloat(document.getElementById('maxLat').value);
+            
+            if (!isNaN(minLon) && !isNaN(maxLon) && !isNaN(minLat) && !isNaN(maxLat)) {
+                request.viewport = {
+                    minLon: minLon,
+                    minLat: minLat,
+                    maxLon: maxLon,
+                    maxLat: maxLat
+                };
+            }
+            
+            log('Sending query: ' + JSON.stringify(request));
+            
+            // 쿼리 전송
+            stompClient.send('/app/tracks/query', {}, JSON.stringify(request));
+            
+            document.getElementById('queryBtn').disabled = true;
+            document.getElementById('cancelBtn').disabled = false;
+        }
+        
+        function cancelQuery() {
+            if (currentQueryId) {
+                stompClient.send('/app/tracks/cancel/' + currentQueryId, {}, '');
+                log('Cancelling query: ' + currentQueryId);
+            }
+        }
+        
+        function handleTrackChunk(chunk) {
+            chunkCount++;
+            trackCount += chunk.tracks.length;
+            
+            document.getElementById('chunksReceived').textContent = chunkCount;
+            document.getElementById('totalTracks').textContent = trackCount;
+            
+            // 결과 표시
+            const resultsDiv = document.getElementById('results');
+            chunk.tracks.forEach(track => {
+                const trackDiv = document.createElement('div');
+                trackDiv.className = 'track-item';
+                trackDiv.innerHTML = `
+                    <strong>Vessel:</strong> ${track.targetId} | 
+                    <strong>Speed:</strong> ${track.avgSpeed.toFixed(1)} kts | 
+                    <strong>Distance:</strong> ${track.distanceNm.toFixed(1)} nm | 
+                    <strong>Points:</strong> ${track.pointCount}
+                `;
+                resultsDiv.appendChild(trackDiv);
+            });
+            
+            // 스크롤을 맨 아래로
+            resultsDiv.scrollTop = resultsDiv.scrollHeight;
+            
+            log(`Chunk ${chunk.chunkIndex} received: ${chunk.tracks.length} tracks`);
+        }
+        
+        function handleStatusUpdate(status) {
+            document.getElementById('queryStatus').textContent = status.status;
+            
+            if (status.progressPercentage >= 0) {
+                const progress = Math.round(status.progressPercentage);
+                document.getElementById('progressBar').style.width = progress + '%';
+                document.getElementById('progressBar').textContent = progress + '%';
+            }
+            
+            // 경과 시간 업데이트
+            if (startTime) {
+                const elapsed = Math.round((new Date() - startTime) / 1000);
+                document.getElementById('elapsedTime').textContent = elapsed + 's';
+            }
+            
+            if (status.status === 'COMPLETED' || status.status === 'CANCELLED' || status.status === 'ERROR') {
+                document.getElementById('queryBtn').disabled = false;
+                document.getElementById('cancelBtn').disabled = true;
+                currentQueryId = null;
+            }
+            
+            log('Status: ' + status.status + ' - ' + status.message);
+        }
+        
+        function clearResults() {
+            document.getElementById('results').innerHTML = 'No data yet. Connect and start a query.';
+            document.getElementById('totalTracks').textContent = '0';
+            document.getElementById('chunksReceived').textContent = '0';
+            document.getElementById('elapsedTime').textContent = '0s';
+            document.getElementById('queryStatus').textContent = '-';
+            document.getElementById('progressBar').style.width = '0%';
+            document.getElementById('progressBar').textContent = '0%';
+            trackCount = 0;
+            chunkCount = 0;
+            log('Results cleared');
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,43 @@
+package gc.mda.signal_batch.dto;
+
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+/**
+ * 궤적 조회 요청 DTO
+ */
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class TrackQueryRequest {
+    private String startTime;               // ISO 형식 (예: "2025-07-29T00:00:00")
+    private String endTime;
+    private Viewport viewport;
+    private Integer chunkSize;              // 청크당 최대 레코드 수
+    private Double simplificationTolerance; // 간소화 임계값
+    
+    // 필터링 옵션
+    private Double minTotalDistance;        // 최소 이동거리 (nm)
+    private Double maxTotalDistance;        // 최대 이동거리 (nm)
+    private Double minAvgSpeed;             // 최소 평균속도 (knots)
+    private Double maxAvgSpeed;             // 최대 평균속도 (knots)
+    private Boolean includeInterBucketDistance;
+    
+    // 모드 선택
+    private boolean chunkedMode = false;    // 압축된 청크 모드 사용 여부
+    private Boolean includeStats;           // 통계 정보 포함 여부
+    
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class Viewport {
+        private Double minLon;
+        private Double maxLon;
+        private Double minLat;
+        private Double maxLat;
+    }
+}

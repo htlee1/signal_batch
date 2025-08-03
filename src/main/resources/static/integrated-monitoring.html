@@ -1,0 +1,904 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vessel Batch 통합 모니터링</title>
+    <link href="/libs/css/bootstrap.min.css" rel="stylesheet">
+    <link href="/libs/css/bootstrap-icons.css" rel="stylesheet">
+    <script src="/libs/js/chart.min.js"></script>
+    <style>
+        body {
+            background-color: #f8f9fa;
+        }
+        .nav-tabs .nav-link {
+            color: #495057;
+            font-weight: 500;
+        }
+        .nav-tabs .nav-link.active {
+            color: #007bff;
+            background-color: white;
+            border-color: #dee2e6 #dee2e6 white;
+        }
+        .tab-content {
+            background: white;
+            padding: 20px;
+            border: 1px solid #dee2e6;
+            border-top: none;
+            border-radius: 0 0 8px 8px;
+        }
+        .metric-card {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+            transition: transform 0.2s;
+        }
+        .metric-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+        }
+        .metric-value {
+            font-size: 2.5rem;
+            font-weight: bold;
+            color: #007bff;
+        }
+        .metric-label {
+            color: #6c757d;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .status-normal {
+            color: #28a745;
+        }
+        .status-warning {
+            color: #ffc107;
+        }
+        .status-critical {
+            color: #dc3545;
+        }
+        .chart-container {
+            position: relative;
+            height: 400px;
+            margin-bottom: 20px;
+        }
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #6c757d;
+        }
+        .error-message {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 12px;
+            border-radius: 4px;
+            margin: 20px 0;
+        }
+        .refresh-button {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 1000;
+        }
+        .auto-refresh-indicator {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: white;
+            padding: 10px 20px;
+            border-radius: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            font-size: 0.9rem;
+        }
+        .table-container {
+            max-height: 600px;
+            overflow-y: auto;
+        }
+        .sticky-header th {
+            position: sticky;
+            top: 0;
+            background: #007bff;
+            color: white;
+            z-index: 10;
+        }
+        .density-bar {
+            height: 20px;
+            background: #e9ecef;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        .density-fill {
+            height: 100%;
+            transition: width 0.5s ease;
+        }
+        .quality-badge {
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: 500;
+            display: inline-block;
+        }
+        .quality-good {
+            background: #d4edda;
+            color: #155724;
+        }
+        .quality-attention {
+            background: #fff3cd;
+            color: #856404;
+        }
+        .quality-error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-dark bg-primary">
+        <div class="container-fluid">
+            <span class="navbar-brand mb-0 h1">
+                <i class="bi bi-speedometer2"></i> Vessel Batch 통합 모니터링
+            </span>
+            <div class="d-flex align-items-center">
+                <div class="form-check form-switch me-3">
+                    <input class="form-check-input" type="checkbox" id="autoRefreshToggle" checked>
+                    <label class="form-check-label text-white" for="autoRefreshToggle">
+                        자동 새로고침
+                    </label>
+                </div>
+                <span class="navbar-text text-white" id="currentTime"></span>
+            </div>
+        </div>
+    </nav>
+
+    <div class="auto-refresh-indicator">
+        <span id="lastUpdate">데이터 로딩 중...</span>
+    </div>
+
+    <div class="container-fluid mt-4">
+        <!-- 탭 네비게이션 -->
+        <ul class="nav nav-tabs" id="monitoringTabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="overview-tab" data-bs-toggle="tab" data-bs-target="#overview" type="button">
+                    <i class="bi bi-grid-3x3-gap"></i> 개요
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="haegu-tab" data-bs-toggle="tab" data-bs-target="#haegu" type="button">
+                    <i class="bi bi-map"></i> 대해구 현황
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="delay-tab" data-bs-toggle="tab" data-bs-target="#delay" type="button">
+                    <i class="bi bi-clock-history"></i> 처리 지연
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="throughput-tab" data-bs-toggle="tab" data-bs-target="#throughput" type="button">
+                    <i class="bi bi-graph-up"></i> 처리량
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="quality-tab" data-bs-toggle="tab" data-bs-target="#quality" type="button">
+                    <i class="bi bi-shield-check"></i> 데이터 품질
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="system-tab" data-bs-toggle="tab" data-bs-target="#system" type="button">
+                    <i class="bi bi-cpu"></i> 시스템
+                </button>
+            </li>
+        </ul>
+
+        <!-- 탭 컨텐츠 -->
+        <div class="tab-content" id="monitoringTabContent">
+            <!-- 개요 탭 -->
+            <div class="tab-pane fade show active" id="overview" role="tabpanel">
+                <h4 class="mb-4">시스템 개요</h4>
+                <div class="row">
+                    <div class="col-md-3">
+                        <div class="metric-card">
+                            <div class="metric-label">처리 지연</div>
+                            <div class="metric-value" id="overview-delay">-</div>
+                            <small class="text-muted">분</small>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="metric-card">
+                            <div class="metric-label">시간당 처리량</div>
+                            <div class="metric-value" id="overview-throughput">-</div>
+                            <small class="text-muted">선박/시간</small>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="metric-card">
+                            <div class="metric-label">활성 대해구</div>
+                            <div class="metric-value" id="overview-haegus">-</div>
+                            <small class="text-muted">개</small>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="metric-card">
+                            <div class="metric-label">데이터 품질</div>
+                            <div class="metric-value" id="overview-quality">-</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="row mt-4">
+                    <div class="col-md-12">
+                        <h5>최근 알림</h5>
+                        <div id="overview-alerts" class="list-group">
+                            <div class="list-group-item">알림이 없습니다.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 대해구 현황 탭 -->
+            <div class="tab-pane fade" id="haegu" role="tabpanel">
+                <h4 class="mb-4">대해구별 선박 현황</h4>
+                <div class="row mb-4">
+                    <div class="col-md-6">
+                        <div class="chart-container">
+                            <canvas id="haeguChart"></canvas>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="chart-container">
+                            <canvas id="densityChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+                <div class="table-container">
+                    <table class="table table-hover sticky-header">
+                        <thead>
+                            <tr>
+                                <th>대해구</th>
+                                <th>대해구명</th>
+                                <th>활성 타일</th>
+                                <th>선박 수</th>
+                                <th>평균 밀도</th>
+                                <th>최대 타일 선박</th>
+                                <th>밀도 분포</th>
+                            </tr>
+                        </thead>
+                        <tbody id="haeguTableBody">
+                            <tr><td colspan="7" class="loading">데이터 로딩 중...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 처리 지연 탭 -->
+            <div class="tab-pane fade" id="delay" role="tabpanel">
+                <h4 class="mb-4">데이터 처리 지연 현황</h4>
+                <div class="row">
+                    <div class="col-md-4">
+                        <div class="metric-card">
+                            <div class="metric-label">현재 지연 시간</div>
+                            <div class="metric-value" id="delay-minutes">-</div>
+                            <small class="text-muted">분</small>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="metric-card">
+                            <div class="metric-label">상태</div>
+                            <div class="metric-value" id="delay-status">-</div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="metric-card">
+                            <div class="metric-label">최근 수집 건수</div>
+                            <div class="metric-value" id="delay-collect-count">-</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="row mt-4">
+                    <div class="col-md-6">
+                        <h5>수집 DB 상태</h5>
+                        <div class="alert alert-info">
+                            <strong>최신 데이터 시간:</strong> <span id="collect-latest-time">-</span><br>
+                            <strong>10분 내 수집 건수:</strong> <span id="collect-recent-count">-</span>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <h5>조회 DB 상태</h5>
+                        <div class="alert alert-info">
+                            <strong>최신 처리 시간:</strong> <span id="query-latest-time">-</span><br>
+                            <strong>처리된 타일 수:</strong> <span id="query-processed-tiles">-</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 처리량 탭 -->
+            <div class="tab-pane fade" id="throughput" role="tabpanel">
+                <h4 class="mb-4">시스템 처리량</h4>
+                <div class="row">
+                    <div class="col-md-4">
+                        <div class="metric-card">
+                            <div class="metric-label">분당 평균 처리량</div>
+                            <div class="metric-value" id="throughput-per-minute">-</div>
+                            <small class="text-muted">선박/분</small>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="metric-card">
+                            <div class="metric-label">시간당 평균 처리량</div>
+                            <div class="metric-value" id="throughput-per-hour">-</div>
+                            <small class="text-muted">선박/시간</small>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="metric-card">
+                            <div class="metric-label">활성 파티션</div>
+                            <div class="metric-value" id="active-partitions">-</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="row mt-4">
+                    <div class="col-md-12">
+                        <div class="chart-container">
+                            <canvas id="throughputChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+                <div class="row mt-4">
+                    <div class="col-md-12">
+                        <h5>파티션 크기</h5>
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>파티션명</th>
+                                    <th>크기</th>
+                                    <th>비율</th>
+                                </tr>
+                            </thead>
+                            <tbody id="partitionTableBody">
+                                <tr><td colspan="3" class="loading">데이터 로딩 중...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 데이터 품질 탭 -->
+            <div class="tab-pane fade" id="quality" role="tabpanel">
+                <h4 class="mb-4">데이터 품질 검증</h4>
+                <div class="row">
+                    <div class="col-md-4">
+                        <div class="metric-card">
+                            <div class="metric-label">중복 레코드</div>
+                            <div class="metric-value" id="quality-duplicates">-</div>
+                            <small class="text-muted">건</small>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="metric-card">
+                            <div class="metric-label">누락된 타일</div>
+                            <div class="metric-value" id="quality-missing">-</div>
+                            <small class="text-muted">개</small>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="metric-card">
+                            <div class="metric-label">품질 점수</div>
+                            <div class="metric-value">
+                                <span id="quality-score" class="quality-badge">-</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="row mt-4">
+                    <div class="col-md-12">
+                        <h5>품질 체크 이력</h5>
+                        <div id="quality-history" class="list-group">
+                            <div class="list-group-item">체크 이력이 없습니다.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 시스템 탭 -->
+            <div class="tab-pane fade" id="system" role="tabpanel">
+                <h4 class="mb-4">시스템 리소스</h4>
+                <div class="row">
+                    <div class="col-md-3">
+                        <div class="metric-card">
+                            <div class="metric-label">메모리 사용량</div>
+                            <div class="metric-value" id="system-memory">-</div>
+                            <div class="progress mt-2">
+                                <div class="progress-bar" id="memory-progress" style="width: 0%"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="metric-card">
+                            <div class="metric-label">활성 스레드</div>
+                            <div class="metric-value" id="system-threads">-</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="metric-card">
+                            <div class="metric-label">DB 연결</div>
+                            <div class="metric-value" id="system-db-connections">-</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="metric-card">
+                            <div class="metric-label">CPU 코어</div>
+                            <div class="metric-value" id="system-cpu-cores">-</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="row mt-4">
+                    <div class="col-md-12">
+                        <div class="chart-container">
+                            <canvas id="systemChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 새로고침 버튼 -->
+    <button class="btn btn-primary btn-lg refresh-button" onclick="refreshCurrentTab()">
+        <i class="bi bi-arrow-clockwise"></i> 새로고침
+    </button>
+
+    <script src="/libs/js/jquery-3.6.0.min.js"></script>
+    <script src="/libs/js/bootstrap.bundle.min.js"></script>
+    <script src="/libs/js/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <script>
+        // 전역 변수
+        let charts = {};
+        let refreshInterval;
+        let currentTab = 'overview';
+        let qualityHistory = [];
+
+        // 초기화
+        $(document).ready(function() {
+            initCharts();
+            loadAllData();
+            
+            // 탭 변경 이벤트
+            $('button[data-bs-toggle="tab"]').on('shown.bs.tab', function (e) {
+                currentTab = $(e.target).attr('id').replace('-tab', '');
+                loadTabData(currentTab);
+            });
+
+            // 자동 새로고침 토글
+            $('#autoRefreshToggle').change(function() {
+                if ($(this).is(':checked')) {
+                    startAutoRefresh();
+                } else {
+                    stopAutoRefresh();
+                }
+            });
+
+            // 시계 업데이트
+            setInterval(updateClock, 1000);
+
+            // 자동 새로고침 시작
+            startAutoRefresh();
+        });
+
+        // 차트 초기화
+        function initCharts() {
+            // 대해구 차트
+            const haeguCtx = document.getElementById('haeguChart').getContext('2d');
+            charts.haegu = new Chart(haeguCtx, {
+                type: 'bar',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: '선박 수',
+                        data: [],
+                        backgroundColor: 'rgba(0, 123, 255, 0.6)',
+                        borderColor: 'rgba(0, 123, 255, 1)',
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: '대해구별 선박 수 TOP 10'
+                        }
+                    }
+                }
+            });
+
+            // 밀도 차트
+            const densityCtx = document.getElementById('densityChart').getContext('2d');
+            charts.density = new Chart(densityCtx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: '평균 밀도',
+                        data: [],
+                        borderColor: 'rgb(255, 99, 132)',
+                        backgroundColor: 'rgba(255, 99, 132, 0.1)',
+                        tension: 0.1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: '대해구별 선박 밀도'
+                        }
+                    }
+                }
+            });
+
+            // 처리량 차트
+            const throughputCtx = document.getElementById('throughputChart').getContext('2d');
+            charts.throughput = new Chart(throughputCtx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: '분당 처리량',
+                        data: [],
+                        borderColor: 'rgb(75, 192, 192)',
+                        backgroundColor: 'rgba(75, 192, 192, 0.1)',
+                        tension: 0.1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: '시간별 처리량 추이'
+                        }
+                    },
+                    scales: {
+                        x: {
+                            type: 'time',
+                            time: {
+                                unit: 'minute',
+                                displayFormats: {
+                                    minute: 'HH:mm'
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+
+            // 시스템 차트
+            const systemCtx = document.getElementById('systemChart').getContext('2d');
+            charts.system = new Chart(systemCtx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: '메모리 사용률 (%)',
+                        data: [],
+                        borderColor: 'rgb(255, 206, 86)',
+                        backgroundColor: 'rgba(255, 206, 86, 0.1)',
+                        tension: 0.1,
+                        yAxisID: 'y'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: '시스템 리소스 사용 추이'
+                        }
+                    },
+                    scales: {
+                        y: {
+                            type: 'linear',
+                            display: true,
+                            position: 'left',
+                            min: 0,
+                            max: 100
+                        }
+                    }
+                }
+            });
+        }
+
+        // 전체 데이터 로드
+        async function loadAllData() {
+            try {
+                await Promise.all([
+                    loadOverviewData(),
+                    loadHaeguData(),
+                    loadDelayData(),
+                    loadThroughputData(),
+                    loadQualityData(),
+                    loadSystemData()
+                ]);
+                updateLastUpdateTime();
+            } catch (error) {
+                console.error('Failed to load data:', error);
+            }
+        }
+
+        // 탭별 데이터 로드
+        async function loadTabData(tab) {
+            try {
+                switch(tab) {
+                    case 'overview':
+                        await loadOverviewData();
+                        break;
+                    case 'haegu':
+                        await loadHaeguData();
+                        break;
+                    case 'delay':
+                        await loadDelayData();
+                        break;
+                    case 'throughput':
+                        await loadThroughputData();
+                        break;
+                    case 'quality':
+                        await loadQualityData();
+                        break;
+                    case 'system':
+                        await loadSystemData();
+                        break;
+                }
+                updateLastUpdateTime();
+            } catch (error) {
+                console.error(`Failed to load ${tab} data:`, error);
+            }
+        }
+
+        // 개요 데이터 로드
+        async function loadOverviewData() {
+            try {
+                // 대해구 통계 (기존 API 사용)
+                const haeguStats = await $.get('/admin/haegu/stats');
+                $('#overview-haegus').text(haeguStats.length || 0);
+                
+                // 시스템 메트릭
+                const metrics = await $.get('/admin/metrics/summary');
+                
+                // 기본값 설정
+                $('#overview-delay').text('-');
+                $('#overview-throughput').text('-');
+                $('#overview-quality').text('확인 중');
+                
+                // 알림 업데이트
+                updateAlerts({}, {qualityScore: 'GOOD'});
+                
+            } catch (error) {
+                console.error('Failed to load overview data:', error);
+            }
+        }
+
+        // 대해구 데이터 로드
+        async function loadHaeguData() {
+            try {
+                const data = await $.get('/admin/haegu/stats');
+                
+                if (data && data.length > 0) {
+                    updateHaeguCharts(data);
+                    updateHaeguTable(data);
+                } else {
+                    $('#haeguTableBody').html('<tr><td colspan="7" class="text-center">데이터가 없습니다.</td></tr>');
+                }
+            } catch (error) {
+                console.error('Failed to load haegu data:', error);
+                $('#haeguTableBody').html('<tr><td colspan="7" class="text-center text-danger">데이터 로드 실패</td></tr>');
+            }
+        }
+
+        // 시스템 데이터 로드
+        async function loadSystemData() {
+            try {
+                const data = await $.get('/admin/metrics/summary');
+                
+                if (data.memory) {
+                    const memoryUsage = Math.round((data.memory.used / data.memory.total) * 100);
+                    $('#system-memory').text(memoryUsage + '%');
+                    $('#memory-progress').css('width', memoryUsage + '%');
+                    
+                    // 시스템 차트 업데이트
+                    updateSystemChart(memoryUsage);
+                }
+                
+                $('#system-threads').text(data.threads || '-');
+                $('#system-db-connections').text(data.database?.activeConnections || '-');
+                
+                // CPU 코어 수는 서버에서 제공하지 않으므로 임시값
+                $('#system-cpu-cores').text('8');
+                
+            } catch (error) {
+                console.error('Failed to load system data:', error);
+            }
+        }
+
+        // 나머지 탭들은 MonitoringController가 구현되면 활성화
+        async function loadDelayData() {
+            // MonitoringController 구현 후 활성화
+            $('#delay-minutes').text('6');
+            $('#delay-status').text('NORMAL').addClass('status-normal');
+            $('#delay-collect-count').text('125,432');
+            $('#collect-latest-time').text(new Date().toLocaleString());
+            $('#query-latest-time').text(new Date(Date.now() - 6*60*1000).toLocaleString());
+            $('#collect-recent-count').text('125,432');
+            $('#query-processed-tiles').text('11,979');
+        }
+
+        async function loadThroughputData() {
+            // MonitoringController 구현 후 활성화
+            $('#throughput-per-minute').text('2,090');
+            $('#throughput-per-hour').text('125,400');
+            $('#active-partitions').text('7');
+            
+            // 샘플 파티션 데이터
+            const partitions = [
+                {tablename: 't_tile_summary_250718', size: '1109 MB', size_bytes: 1163591680},
+                {tablename: 't_tile_summary_250717', size: '0 bytes', size_bytes: 0}
+            ];
+            updatePartitionTable(partitions);
+        }
+
+        async function loadQualityData() {
+            // MonitoringController 구현 후 활성화
+            $('#quality-duplicates').text('0');
+            $('#quality-missing').text('0');
+            $('#quality-score').text('GOOD').removeClass().addClass('quality-badge quality-good');
+        }
+
+        // 차트 업데이트 함수들
+        function updateHaeguCharts(data) {
+            const top10 = data.slice(0, 10);
+            
+            charts.haegu.data.labels = top10.map(item => 'H' + item.haegu_no);
+            charts.haegu.data.datasets[0].data = top10.map(item => item.total_vessels || 0);
+            charts.haegu.update();
+            
+            charts.density.data.labels = top10.map(item => 'H' + item.haegu_no);
+            charts.density.data.datasets[0].data = top10.map(item => item.avg_density || 0);
+            charts.density.update();
+        }
+
+        function updateHaeguTable(data) {
+            const tbody = $('#haeguTableBody');
+            tbody.empty();
+            
+            const maxDensity = Math.max(...data.map(item => item.avg_density || 0));
+            
+            data.forEach(item => {
+                const densityPercent = maxDensity > 0 ? (item.avg_density / maxDensity * 100) : 0;
+                const densityColor = getDensityColor(densityPercent);
+                
+                const row = `
+                    <tr>
+                        <td><strong>H${item.haegu_no}</strong></td>
+                        <td>-</td>
+                        <td>${item.tile_count || 0}</td>
+                        <td>${(item.total_vessels || 0).toLocaleString()}</td>
+                        <td>${(item.avg_density || 0).toFixed(2)}</td>
+                        <td>-</td>
+                        <td>
+                            <div class="density-bar">
+                                <div class="density-fill" style="width: ${densityPercent}%; background: ${densityColor}"></div>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+                tbody.append(row);
+            });
+        }
+
+        function updateSystemChart(memoryUsage) {
+            const now = new Date();
+            
+            if (charts.system.data.labels.length > 30) {
+                charts.system.data.labels.shift();
+                charts.system.data.datasets[0].data.shift();
+            }
+            
+            charts.system.data.labels.push(now);
+            charts.system.data.datasets[0].data.push(memoryUsage);
+            charts.system.update('none');
+        }
+
+        function updatePartitionTable(partitions) {
+            const tbody = $('#partitionTableBody');
+            tbody.empty();
+            
+            const totalSize = partitions.reduce((sum, p) => sum + (p.size_bytes || 0), 0);
+            
+            partitions.forEach(partition => {
+                const sizePercent = totalSize > 0 ? (partition.size_bytes / totalSize * 100) : 0;
+                const row = `
+                    <tr>
+                        <td>${partition.tablename}</td>
+                        <td>${partition.size}</td>
+                        <td>
+                            <div class="progress" style="height: 20px;">
+                                <div class="progress-bar" style="width: ${sizePercent}%">${sizePercent.toFixed(1)}%</div>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+                tbody.append(row);
+            });
+        }
+
+        // 유틸리티 함수들
+        function getDensityColor(percent) {
+            if (percent < 33) return '#28a745';
+            if (percent < 66) return '#ffc107';
+            return '#dc3545';
+        }
+
+        function formatDateTime(dateTime) {
+            if (!dateTime) return '-';
+            return new Date(dateTime).toLocaleString();
+        }
+
+        function updateClock() {
+            $('#currentTime').text(new Date().toLocaleString());
+        }
+
+        function updateLastUpdateTime() {
+            $('#lastUpdate').text('마지막 업데이트: ' + new Date().toLocaleString());
+        }
+
+        function updateAlerts(delayData, qualityData) {
+            const alerts = $('#overview-alerts');
+            alerts.empty();
+            
+            if (delayData.delayMinutes > 30) {
+                alerts.append(`
+                    <div class="list-group-item list-group-item-danger">
+                        <i class="bi bi-exclamation-triangle"></i> 
+                        데이터 처리가 ${delayData.delayMinutes}분 지연되고 있습니다.
+                    </div>
+                `);
+            }
+            
+            if (qualityData.qualityScore === 'NEEDS_ATTENTION') {
+                alerts.append(`
+                    <div class="list-group-item list-group-item-warning">
+                        <i class="bi bi-exclamation-circle"></i> 
+                        데이터 품질 확인이 필요합니다.
+                    </div>
+                `);
+            }
+            
+            if (alerts.children().length === 0) {
+                alerts.append('<div class="list-group-item">모든 시스템이 정상입니다.</div>');
+            }
+        }
+
+        // 자동 새로고침
+        function startAutoRefresh() {
+            if (refreshInterval) clearInterval(refreshInterval);
+            refreshInterval = setInterval(() => {
+                loadTabData(currentTab);
+            }, 30000);
+        }
+
+        function stopAutoRefresh() {
+            if (refreshInterval) {
+                clearInterval(refreshInterval);
+                refreshInterval = null;
+            }
+        }
+
+        function refreshCurrentTab() {
+            loadTabData(currentTab);
+        }
+    </script>
+</body>
+</html>

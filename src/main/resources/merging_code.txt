@@ -1,0 +1,123 @@
+/**
+ * 병합된 궤적 스트리밍 메서드 추가
+ */
+private void streamMergedTracks(TrackQueryRequest request,
+                               String queryId,
+                               String sessionId,
+                               Consumer<TrackChunkResponse> chunkConsumer,
+                               Consumer<QueryStatusUpdate> statusConsumer) {
+    
+    try {
+        // 1. 모든 데이터 수집
+        List<VesselTrackData> allTracks = new ArrayList<>();
+        AtomicInteger totalCount = new AtomicInteger(0);
+        
+        // 시간 범위별 테이블에서 병렬로 데이터 수집
+        Map<TableStrategy, List<TimeRange>> strategyMap = splitTimeRangeByStrategy(
+            request.getStartTime(), request.getEndTime()
+        );
+        
+        List<CompletableFuture<Void>> futures = new ArrayList<>();
+        for (Map.Entry<TableStrategy, List<TimeRange>> entry : strategyMap.entrySet()) {
+            CompletableFuture<Void> future = CompletableFuture.runAsync(() -> {
+                List<VesselTrackData> tracks = queryTracksForStrategy(
+                    request, entry.getKey(), entry.getValue()
+                );
+                synchronized (allTracks) {
+                    allTracks.addAll(tracks);
+                    totalCount.addAndGet(tracks.size());
+                }
+            }, executorService);
+            futures.add(future);
+        }
+        
+        // 모든 쿼리 완료 대기
+        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+        
+        log.info("Collected {} tracks for merging", totalCount.get());
+        statusConsumer.accept(new QueryStatusUpdate(
+            queryId, "MERGING", "Merging vessel tracks...", 50.0
+        ));
+        
+        // 2. 선박별 병합
+        List<MergedVesselTrack> mergedTracks = vesselTrackMerger.mergeTracksByVessel(allTracks);
+        log.info("Merged into {} vessel tracks", mergedTracks.size());
+        
+        // 3. 청크로 나누어 전송
+        int chunkSize = 100; // 선박 단위로 청크 크기 감소
+        List<List<MergedVesselTrack>> chunks = partition(mergedTracks, chunkSize);
+        
+        for (int i = 0; i < chunks.size(); i++) {
+            TrackChunkResponse response = new TrackChunkResponse();
+            response.setQueryId(queryId);
+            response.setChunkIndex(i);
+            response.setTotalChunks(chunks.size());
+            response.setMergedTracks(chunks.get(i));
+            response.setIsMerged(true);
+            response.setIsLastChunk(i == chunks.size() - 1);
+            
+            ChunkStats stats = new ChunkStats();
+            stats.setTotalTracks(mergedTracks.size());
+            stats.setProgressPercentage((double)(i + 1) / chunks.size() * 100);
+            response.setStats(stats);
+            
+            chunkConsumer.accept(response);
+            
+            // 취소 확인
+            if (activeQueries.get(queryId).isCancelled()) {
+                break;
+            }
+        }
+        
+    } catch (Exception e) {
+        log.error("Error in merged streaming: {}", e.getMessage(), e);
+        throw new RuntimeException(e);
+    }
+}
+
+// 테이블별 데이터 조회 헬퍼 메서드
+private List<VesselTrackData> queryTracksForStrategy(TrackQueryRequest request, 
+                                                    TableStrategy strategy,
+                                                    List<TimeRange> timeRanges) {
+    List<VesselTrackData> tracks = new ArrayList<>();
+    SimplificationLevel level = determineSimplificationLevel(request, timeRanges);
+    
+    for (TimeRange range : timeRanges) {
+        String sql = buildOptimizedQuery(request, strategy, level, null);
+        
+        try (Connection conn = queryDataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            
+            ps.setTimestamp(1, Timestamp.valueOf(range.getStart()));
+            ps.setTimestamp(2, Timestamp.valueOf(range.getEnd()));
+            
+            if (request.getViewport() != null) {
+                ps.setDouble(3, request.getViewport().getMinLon());
+                ps.setDouble(4, request.getViewport().getMinLat());
+                ps.setDouble(5, request.getViewport().getMaxLon());
+                ps.setDouble(6, request.getViewport().getMaxLat());
+            }
+            
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    VesselTrackData track = mapResultSet(rs);
+                    track.setTimeBucket(range.getStart()); // 시간 정보 추가
+                    tracks.add(track);
+                }
+            }
+        } catch (SQLException e) {
+            log.error("Error querying tracks: {}", e.getMessage());
+        }
+    }
+    
+    return tracks;
+}
+
+// 리스트 분할 헬퍼 메서드
+private <T> List<List<T>> partition(List<T> list, int size) {
+    List<List<T>> partitions = new ArrayList<>();
+    for (int i = 0; i < list.size(); i += size) {
+        partitions.add(list.subList(i, Math.min(i + size, list.size())));
+    }
+    return partitions;
+}

@@ -1,0 +1,39 @@
+server:
+  port: 8090
+
+spring:
+  # 로컬 환경에서는 하나의 DB만 사용
+  datasource:
+    url: jdbc:postgresql://localhost:5432/mdadb2?stringtype=unspecified&currentSchema=signal&TimeZone=Asia/Seoul
+    username: mda
+    password: mda#8932
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      pool-name: LocalHikariPool
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      maximum-pool-size: 20
+      minimum-idle: 5
+
+  batch:
+    job:
+      enabled: false  # 자동 실행 방지
+    jdbc:
+      initialize-schema: always  # 배치 테이블 자동 생성
+      table-prefix: BATCH_
+
+logging:
+  level:
+    root: INFO
+    gc.mda.signal_batch: DEBUG
+    org.springframework.batch: DEBUG
+    org.springframework.jdbc: DEBUG
+    org.springframework.transaction: DEBUG
+
+# 로컬 환경 배치 설정
+vessel:
+  batch:
+    chunk-size: 1000
+    page-size: 1000
+    partition-size: 4  # 로컬에서는 적은 수의 파티션 사용

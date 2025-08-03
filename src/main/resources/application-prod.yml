@@ -1,0 +1,40 @@
+spring:
+  datasource:
+    collect:
+      jdbc-url: jdbc:postgresql://prod-collect-db:5432/vessel_collect_db
+      username: ${COLLECT_DB_USER}
+      password: ${COLLECT_DB_PASS}
+      hikari:
+        maximum-pool-size: 50
+        connection-timeout: 20000
+
+    query:
+      jdbc-url: jdbc:postgresql://prod-query-db:5432/vessel_query_db
+      username: ${QUERY_DB_USER}
+      password: ${QUERY_DB_PASS}
+      hikari:
+        maximum-pool-size: 100
+        connection-timeout: 20000
+
+    batch:
+      jdbc-url: jdbc:postgresql://prod-batch-db:5432/vessel_batch_db
+      username: ${BATCH_DB_USER}
+      password: ${BATCH_DB_PASS}
+
+logging:
+  level:
+    root: WARN
+    com.vessel.batch: INFO
+    org.springframework.batch: INFO
+  file:
+    name: /var/log/vessel-batch/vessel-batch.log
+
+# 운영 환경 배치 설정
+batch:
+  chunk-size: 10000
+  page-size: 10000
+  partition-size: 24
+
+# JVM 최적화
+jvm:
+  opts: "-Xms8g -Xmx16g -XX:+UseG1GC -XX:MaxGCPauseMillis=200"

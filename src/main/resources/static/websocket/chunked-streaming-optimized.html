@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Chunked Track Streaming Test - Optimized</title>
+    <script src="/libs/js/sockjs.min.js"></script>
+    <script src="/libs/js/stomp.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+        .controls {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        .control-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: inline-block;
+            width: 150px;
+            font-weight: bold;
+        }
+        input, select {
+            padding: 5px 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            width: 200px;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        button:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+        }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        .stat-box {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            text-align: center;
+        }
+        .stat-box h3 {
+            margin: 0;
+            color: #495057;
+            font-size: 14px;
+        }
+        .stat-box .value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #007bff;
+            margin-top: 5px;
+        }
+        .progress {
+            height: 30px;
+            background: #e9ecef;
+            border-radius: 15px;
+            overflow: hidden;
+            margin-bottom: 20px;
+        }
+        .progress-bar {
+            height: 100%;
+            background: #007bff;
+            transition: width 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+        }
+        .vessel-summary {
+            margin-top: 20px;
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+        }
+        .log {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            height: 300px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+        .log-entry {
+            margin-bottom: 5px;
+            padding: 3px 5px;
+        }
+        .log-entry.info { color: #004085; }
+        .log-entry.success { color: #155724; }
+        .log-entry.error { color: #721c24; }
+        .log-entry.chunk { 
+            color: #856404; 
+            background: #fff3cd; 
+            border-radius: 3px; 
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚢 Optimized Chunked Track Streaming</h1>
+        
+        <div class="controls">
+            <h3>Query Parameters</h3>
+            <div class="control-group">
+                <label>Start Time:</label>
+                <input type="datetime-local" id="startTime" value="2025-07-29T07:00">
+            </div>
+            <div class="control-group">
+                <label>End Time:</label>
+                <input type="datetime-local" id="endTime" value="2025-07-29T13:00">
+            </div>
+            <div class="control-group">
+                <label>Viewport:</label>
+                <input type="text" id="viewport" placeholder="minLon,minLat,maxLon,maxLat" value="120,30,132,38">
+            </div>
+            <div>
+                <button id="connectBtn" onclick="connect()">Connect</button>
+                <button id="startBtn" onclick="startQuery()" disabled>Start Query</button>
+                <button id="cancelBtn" onclick="cancelQuery()" disabled>Cancel</button>
+                <button id="clearBtn" onclick="clearLog()">Clear Log</button>
+            </div>
+        </div>
+        
+        <div class="stats">
+            <div class="stat-box">
+                <h3>Chunks Received</h3>
+                <div class="value" id="chunksReceived">0</div>
+            </div>
+            <div class="stat-box">
+                <h3>Vessels</h3>
+                <div class="value" id="vesselsFound">0</div>
+            </div>
+            <div class="stat-box">
+                <h3>Points</h3>
+                <div class="value" id="totalPoints">0</div>
+            </div>
+            <div class="stat-box">
+                <h3>Data Size (KB)</h3>
+                <div class="value" id="dataSize">0</div>
+            </div>
+        </div>
+        
+        <div class="progress">
+            <div class="progress-bar" id="progressBar" style="width: 0%">0%</div>
+        </div>
+        
+        <div class="vessel-summary">
+            <h3>Performance Metrics</h3>
+            <div id="performanceMetrics">
+                <div>Parse Time: <span id="parseTime">0</span> ms</div>
+                <div>Merge Time: <span id="mergeTime">0</span> ms</div>
+                <div>Total Time: <span id="totalTime">0</span> s</div>
+            </div>
+        </div>
+        
+        <div class="log" id="log"></div>
+    </div>
+
+    <script>
+        let stompClient = null;
+        let currentQueryId = null;
+        let startTime = null;
+        
+        // 선박별 데이터 저장 (개선된 구조)
+        const vesselData = new Map();
+        let chunksReceived = 0;
+        let totalDataSize = 0;
+        let totalPoints = 0;
+        
+        function connect() {
+            const socket = new SockJS('/ws-tracks');
+            stompClient = Stomp.over(socket);
+            
+            stompClient.connect({}, function(frame) {
+                log('Connected to WebSocket', 'success');
+                document.getElementById('connectBtn').disabled = true;
+                document.getElementById('startBtn').disabled = false;
+                
+                // Subscribe to channels
+                stompClient.subscribe('/user/queue/tracks/response', handleResponse);
+                stompClient.subscribe('/user/queue/tracks/status', handleStatus);
+                stompClient.subscribe('/user/queue/tracks/chunk', handleOptimizedChunk);
+                stompClient.subscribe('/user/queue/errors', handleError);
+            });
+        }
+        
+        function startQuery() {
+            // Reset
+            vesselData.clear();
+            chunksReceived = 0;
+            totalDataSize = 0;
+            totalPoints = 0;
+            startTime = Date.now();
+            updateStats();
+            
+            // Get parameters
+            const startTimeValue = document.getElementById('startTime').value + ':00';
+            const endTimeValue = document.getElementById('endTime').value + ':00';
+            const viewportValue = document.getElementById('viewport').value;
+            
+            // Parse viewport
+            let viewport = null;
+            if (viewportValue) {
+                const parts = viewportValue.split(',').map(v => parseFloat(v.trim()));
+                if (parts.length === 4) {
+                    viewport = {
+                        minLon: parts[0],
+                        minLat: parts[1],
+                        maxLon: parts[2],
+                        maxLat: parts[3]
+                    };
+                }
+            }
+            
+            const request = {
+                startTime: startTimeValue,
+                endTime: endTimeValue,
+                viewport: viewport,
+                chunkedMode: true,
+                chunkSize: 20000
+            };
+            
+            log('Starting optimized query...', 'info');
+            stompClient.send('/app/tracks/query', {}, JSON.stringify(request));
+            
+            document.getElementById('startBtn').disabled = true;
+            document.getElementById('cancelBtn').disabled = false;
+        }
+        
+        function handleOptimizedChunk(message) {
+            const parseStart = performance.now();
+            const chunk = JSON.parse(message.body);
+            
+            chunksReceived++;
+            totalDataSize += message.body.length / 1024;
+            
+            // 압축된 트랙 처리
+            if (chunk.compactTracks) {
+                const mergeStart = performance.now();
+                
+                chunk.compactTracks.forEach(track => {
+                    const vesselId = track.vesselId;
+                    
+                    if (!vesselData.has(vesselId)) {
+                        vesselData.set(vesselId, {
+                            sigSrcCd: track.sigSrcCd,
+                            targetId: track.targetId,
+                            geometry: [],
+                            timestamps: [],
+                            speeds: [],
+                            totalDistance: 0,
+                            maxSpeed: 0
+                        });
+                    }
+                    
+                    const vessel = vesselData.get(vesselId);
+                    
+                    // 단순 배열 병합 (파싱 불필요)
+                    vessel.geometry.push(...track.geometry);
+                    vessel.timestamps.push(...track.timestamps);
+                    vessel.speeds.push(...track.speeds);
+                    vessel.totalDistance += track.totalDistance || 0;
+                    vessel.maxSpeed = Math.max(vessel.maxSpeed, track.maxSpeed || 0);
+                    
+                    totalPoints += track.geometry.length;
+                });
+                
+                const mergeTime = performance.now() - mergeStart;
+                document.getElementById('mergeTime').textContent = mergeTime.toFixed(2);
+            }
+            
+            const parseTime = performance.now() - parseStart;
+            document.getElementById('parseTime').textContent = parseTime.toFixed(2);
+            
+            updateStats();
+            
+            const totalStr = chunk.totalChunks > 0 ? chunk.totalChunks : '?';
+            log(`Chunk ${chunk.chunkIndex + 1}/${totalStr}: ${chunk.compactTracks?.length || 0} vessels`, 'chunk');
+        }
+        
+        function handleResponse(message) {
+            const response = JSON.parse(message.body);
+            if (response.status === 'STARTED') {
+                currentQueryId = response.queryId;
+            }
+        }
+        
+        function handleStatus(message) {
+            const status = JSON.parse(message.body);
+            
+            const progress = status.progressPercentage || status.progress || 0;
+            document.getElementById('progressBar').style.width = progress + '%';
+            document.getElementById('progressBar').textContent = progress.toFixed(1) + '%';
+            
+            if (status.status === 'COMPLETED') {
+                const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
+                document.getElementById('totalTime').textContent = totalTime;
+                
+                log(`Completed in ${totalTime}s - ${vesselData.size} vessels, ${totalPoints} points`, 'success');
+                document.getElementById('startBtn').disabled = false;
+                document.getElementById('cancelBtn').disabled = true;
+            }
+        }
+        
+        function handleError(message) {
+            log('Error: ' + message.body, 'error');
+        }
+        
+        function updateStats() {
+            document.getElementById('chunksReceived').textContent = chunksReceived;
+            document.getElementById('vesselsFound').textContent = vesselData.size;
+            document.getElementById('totalPoints').textContent = totalPoints.toLocaleString();
+            document.getElementById('dataSize').textContent = totalDataSize.toFixed(2);
+        }
+        
+        function cancelQuery() {
+            if (currentQueryId) {
+                stompClient.send('/app/tracks/cancel/' + currentQueryId, {});
+            }
+        }
+        
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logDiv.appendChild(entry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+        
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+        }
+    </script>
+</body>
+</html>

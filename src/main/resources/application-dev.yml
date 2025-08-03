@@ -1,0 +1,229 @@
+server:
+  port: 8090
+  tomcat:
+    threads:
+      max: 200
+      min-spare: 10
+    connection-timeout: 60000    # 60초로 증가
+    max-http-form-post-size: 50MB  # 50MB로 증가
+    max-swallow-size: 50MB         # 50MB로 증가
+    max-connections: 10000         # 최대 연결 수
+    accept-count: 100              # 대기열 크기
+
+spring:
+  datasource:
+    # 원격 수집 DB
+    collect:
+      jdbc-url: jdbc:postgresql://10.26.252.39:5432/mdadb?currentSchema=signal&options=-csearch_path=signal,public&assumeMinServerVersion=12&reWriteBatchedInserts=true
+      username: mda
+      password: mda#8932
+      driver-class-name: org.postgresql.Driver
+      hikari:
+        pool-name: CollectHikariPool
+        connection-timeout: 30000  # 원격 연결이므로 타임아웃 증가
+        idle-timeout: 600000
+        max-lifetime: 1800000
+        maximum-pool-size: 20  # 10 -> 20 증가
+        minimum-idle: 5  # 2 -> 5 증가
+        # 원격 연결 안정성을 위한 추가 설정
+        connection-test-query: SELECT 1
+        validation-timeout: 5000
+        leak-detection-threshold: 60000  # 커넥션 누수 감지 (60초)
+        connection-init-sql: "SET TIME ZONE 'Asia/Seoul'; SET search_path TO signal, public;"
+
+    # 원격 조회 DB (수집 DB와 동일하게 설정)
+    query:
+      jdbc-url: jdbc:postgresql://10.26.252.48:5432/mdadb?currentSchema=signal&options=-csearch_path=signal,public&assumeMinServerVersion=12&reWriteBatchedInserts=true
+      username: mda
+      password: mda#8932
+      driver-class-name: org.postgresql.Driver
+      hikari:
+        pool-name: QueryHikariPool
+        connection-timeout: 5000
+        idle-timeout: 600000
+        max-lifetime: 1800000
+        maximum-pool-size: 40  # 20 -> 40 증가
+        minimum-idle: 10  # 5 -> 10 증가
+        connection-test-query: SELECT 1
+        validation-timeout: 5000
+        leak-detection-threshold: 60000  # 커넥션 누수 감지 (60초)
+        connection-init-sql: "SET TIME ZONE 'Asia/Seoul'; SET search_path TO signal, public;"
+
+    # 로컬 배치 메타 DB
+    batch:
+      jdbc-url: jdbc:postgresql://10.26.252.48:5432/mdadb?currentSchema=public&assumeMinServerVersion=12&reWriteBatchedInserts=true
+      username: mda
+      password: mda#8932
+      driver-class-name: org.postgresql.Driver
+      hikari:
+        pool-name: BatchHikariPool
+        maximum-pool-size: 30  # 10 → 30 증가
+        minimum-idle: 10       # 2 → 10 증가
+        connection-timeout: 30000  # 30초 타임아웃
+        idle-timeout: 600000
+        max-lifetime: 1800000
+        leak-detection-threshold: 60000  # 커넥션 누수 감지 (60초)
+        connection-init-sql: "SET TIME ZONE 'Asia/Seoul'"  # public 스키마만 사용
+
+  # Request 크기 설정
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 50MB
+
+  # Spring Batch 설정
+  batch:
+    job:
+      enabled: false
+    jdbc:
+      initialize-schema: never  # always에서 never로 변경 (이미 수동으로 생성했으므로)
+      table-prefix: BATCH_
+
+logging:
+  level:
+    root: INFO
+    gc.mda.signal_batch: DEBUG
+    gc.mda.signal_batch.util: INFO
+    gc.mda.signal_batch.writer: INFO
+    gc.mda.signal_batch.reader: INFO
+    gc.mda.signal_batch.processor: INFO
+    gc.mda.signal_batch.service: WARN
+    gc.mda.signal_batch.monitor: DEBUG
+    org.springframework.batch: INFO
+    org.springframework.jdbc: WARN
+    org.postgresql: WARN
+    com.zaxxer.hikari: INFO
+
+# 개발 환경 배치 설정 (성능 최적화)
+vessel:  # spring 하위가 아닌 최상위 레벨
+  batch:
+    # Area Statistics 처리를 위한 별도 설정
+    area-statistics:
+      chunk-size: 1000     # 5000 → 1000
+      batch-size: 500      # 새로 추가
+    
+    chunk-size: 5000
+    page-size: 5000
+    partition-size: 12
+    
+    # 성능 최적화 설정
+    optimization:
+      enabled: true
+      dynamic-chunk-sizing: true
+      memory-optimization: true
+      cache-optimization: true
+      thread-pool-optimization: true
+      # 동적 청크 크기 조정
+      chunk:
+        min-size: 1000
+        max-size: 20000
+        adjustment-factor: 0.2
+      # 메모리 임계값
+      memory:
+        warning-threshold: 70
+        critical-threshold: 85
+        optimization-threshold: 80
+      # 캐시 설정
+      cache:
+        min-hit-rate: 70
+        area-boundary-size: 5000
+
+    # Reader 최적화
+    fetch-size: 200000
+    use-cursor-reader: true
+
+    # Bulk Insert 최적화
+    bulk-insert:
+      batch-size: 5000
+      parallel-threads: 4
+      use-binary-copy: false
+
+    # Writer 설정
+    writer:
+      use-advisory-lock: false
+      parallel-threads: 4
+
+    # 재시도 설정
+    retry:
+      max-attempts: 3
+      initial-interval: 1000
+      max-interval: 10000
+      multiplier: 2
+
+    # 스케줄러 설정
+    scheduler:
+      enabled: true
+      incremental:
+        delay-minutes: 3  # 데이터 수집 지연 고려
+
+    # 타임아웃 설정
+    query-timeout: 1800  # 30분
+    lock:
+      timeout: 30
+      max-retry: 5
+
+    # Health Check 설정
+    health:
+      job-timeout-hours: 2
+      min-partition-count: 1
+
+    # 그리드 설정
+    grid:
+      mode: haegu
+      haegu:
+        cache-enabled: true
+        cache-size: 2000
+    
+    # 비정상 궤적 검출 설정 (개선됨)
+    abnormal-detection:
+      enabled: true
+      5min-speed-threshold: 500       # 5분 집계 비정상 속도 임계값 (200 knots로 완화)
+      # 비정상 판정 기준 (명백한 비정상만 검출하도록 완화)
+      thresholds:
+        # 정박/저속 판단 기준
+        min-movement-nm: 0.05          # 최소 이동거리 (정박 판단)
+        stationary-speed-knots: 0.5    # 정박 속도 기준
+        
+        # 선박 관련 임계값
+        vessel-physical-limit-knots: 100.0      # 선박 물리적 한계
+        vessel-abnormal-speed-knots: 200.0      # 선박 명백한 비정상 속도
+        
+        # 항공기 관련 임계값  
+        aircraft-physical-limit-knots: 600.0    # 항공기 물리적 한계
+        aircraft-abnormal-speed-knots: 800.0    # 항공기 명백한 비정상 속도
+        
+        # 거리 관련 임계값
+        base-distance-5min-nm: 20.0             # 5분 기준 거리 (20nm로 완화)
+        extreme-distance-5min-nm: 100.0         # 5분간 극단적 이동거리
+        
+        # Hourly/Daily 전용 임계값
+        hourly-daily-speed-limit: 500.0         # 시간/일 집계시 극단적 속도만 검출
+        
+        # 기타 설정
+        distance-tolerance: 3.0                 # 거리 허용 배수 (3.0으로 완화)
+        time-scaling-method: "sqrt"             # 시간 스케일링 방법 (sqrt)
+      # 캐시 설정
+      cache:
+        previous-track-size: 10000     # 이전 궤적 캐시 크기
+        ttl-hours: 24                  # 캐시 TTL
+      # 처리 옵션
+      processing:
+        remove-abnormal-segments: false  # 비정상 구간 제거 여부
+        save-corrected-tracks: true      # 보정된 궤적 저장 여부
+        exclude-stationary-vessels: true        # 정박 선박 제외 여부
+        lenient-mode: true                      # 관대한 모드 활성화
+
+# 액추에이터 설정
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,env,loggers,threaddump,heapdump,scheduledtasks
+  endpoint:
+    health:
+      show-details: always
+      show-components: always
+  metrics:
+    tags:
+      application: vessel-batch-aggregation
+      environment: dev

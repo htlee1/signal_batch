@@ -1,0 +1,66 @@
+spring:
+  profiles:
+    active: performance-test
+
+  datasource:
+    collect:
+      hikari:
+        maximum-pool-size: 100
+        minimum-idle: 20
+        connection-timeout: 30000
+        idle-timeout: 600000
+        leak-detection-threshold: 60000
+        connection-init-sql: |
+          SET work_mem = '1GB';
+          SET effective_cache_size = '4GB';
+          SET random_page_cost = 1.1;
+          SET effective_io_concurrency = 200;
+
+    query:
+      hikari:
+        maximum-pool-size: 150
+        minimum-idle: 30
+        connection-init-sql: |
+          SET work_mem = '1GB';
+          SET synchronous_commit = 'off';
+
+vessel:
+  batch:
+    # 성능 테스트용 설정
+    chunk-size: 50000
+    page-size: 100000
+    fetch-size: 100000
+
+    partition-size: 48
+    core-pool-size: 16
+    max-pool-size: 32
+
+    bulk-insert:
+      batch-size: 100000
+      parallel-threads: 8
+      use-binary-copy: true
+
+    lock:
+      timeout: 30
+      max-retry: 5
+
+    writer:
+      use-advisory-lock: false  # 성능 테스트 시 비활성화
+      parallel-threads: 8
+
+# JVM 프로파일링 활성화
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "*"
+  endpoint:
+    jmx:
+      enabled: true
+
+# 로깅 최소화
+logging:
+  level:
+    root: WARN
+    gc.mda.signal_batch: INFO
+    org.springframework.batch: WARN

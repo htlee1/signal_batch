@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket 궤적 스트리밍 테스트</title>
+    <!-- Local JS -->
+    <script src="/libs/js/sockjs.min.js"></script>
+    <script src="/libs/js/stomp.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+        .control-panel {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+        .control-group {
+            display: flex;
+            flex-direction: column;
+        }
+        .control-group label {
+            font-weight: bold;
+            margin-bottom: 5px;
+            color: #495057;
+        }
+        .control-group input, .control-group select {
+            padding: 8px;
+            border: 1px solid #ced4da;
+            border-radius: 4px;
+        }
+        .button-group {
+            margin: 20px 0;
+            text-align: center;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 0 5px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.3s;
+        }
+        .btn-primary {
+            background-color: #007bff;
+            color: white;
+        }
+        .btn-primary:hover {
+            background-color: #0056b3;
+        }
+        .btn-danger {
+            background-color: #dc3545;
+            color: white;
+        }
+        .btn-danger:hover {
+            background-color: #c82333;
+        }
+        .btn-secondary {
+            background-color: #6c757d;
+            color: white;
+        }
+        .btn-secondary:hover {
+            background-color: #545b62;
+        }
+        .status-panel {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+        .status-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 10px;
+        }
+        .status-connected {
+            background-color: #28a745;
+        }
+        .status-disconnected {
+            background-color: #dc3545;
+        }
+        .status-connecting {
+            background-color: #ffc107;
+        }
+        .progress-container {
+            margin: 20px 0;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 30px;
+            background-color: #e9ecef;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%;
+            background-color: #007bff;
+            width: 0%;
+            transition: width 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+        }
+        .results-panel {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-top: 10px;
+        }
+        .stat-item {
+            text-align: center;
+            padding: 10px;
+            background-color: white;
+            border-radius: 4px;
+            border: 1px solid #dee2e6;
+        }
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #007bff;
+        }
+        .stat-label {
+            font-size: 14px;
+            color: #6c757d;
+            margin-top: 5px;
+        }
+        .log-container {
+            height: 300px;
+            overflow-y: auto;
+            border: 1px solid #dee2e6;
+            padding: 10px;
+            font-family: monospace;
+            font-size: 12px;
+            background-color: #f8f9fa;
+        }
+        .log-entry {
+            margin: 2px 0;
+            padding: 2px;
+        }
+        .log-info {
+            color: #0066cc;
+        }
+        .log-error {
+            color: #dc3545;
+        }
+        .log-warning {
+            color: #ffc107;
+        }
+        .log-success {
+            color: #28a745;
+        }
+        .log-filter {
+            color: #6610f2;
+        }
+        .sample-tracks {
+            margin-top: 20px;
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid #dee2e6;
+            padding: 10px;
+            background-color: #f8f9fa;
+        }
+        .track-item {
+            padding: 8px;
+            margin: 5px 0;
+            background-color: white;
+            border-radius: 4px;
+            border: 1px solid #dee2e6;
+            font-size: 12px;
+        }
+        .track-header {
+            font-weight: bold;
+            color: #495057;
+            margin-bottom: 5px;
+        }
+        .track-details {
+            color: #6c757d;
+            line-height: 1.5;
+        }
+        h3 {
+            color: #495057;
+            margin-top: 30px;
+            margin-bottom: 15px;
+            border-bottom: 2px solid #007bff;
+            padding-bottom: 10px;
+        }
+        .filter-section {
+            background-color: #e9ecef;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+        .filter-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            margin-top: 10px;
+        }
+        .checkbox-group input {
+            margin-right: 5px;
+        }
+        .time-preset-buttons {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .time-preset-buttons button {
+            flex: 1;
+            padding: 5px 10px;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>WebSocket 궤적 스트리밍 테스트</h1>
+        
+        <div class="status-panel">
+            <h3>연결 상태</h3>
+            <div>
+                <span class="status-indicator status-disconnected" id="statusIndicator"></span>
+                <span id="statusText">연결 안됨</span>
+            </div>
+        </div>
+
+        <div class="control-panel">
+            <div class="control-group">
+                <label>시작 시간</label>
+                <input type="datetime-local" id="startTime">
+            </div>
+            <div class="control-group">
+                <label>종료 시간</label>
+                <input type="datetime-local" id="endTime">
+            </div>
+            <div class="control-group">
+                <label>Min Longitude</label>
+                <input type="number" id="minLon" value="124.0" step="0.1">
+            </div>
+            <div class="control-group">
+                <label>Max Longitude</label>
+                <input type="number" id="maxLon" value="132.0" step="0.1">
+            </div>
+            <div class="control-group">
+                <label>Min Latitude</label>
+                <input type="number" id="minLat" value="33.0" step="0.1">
+            </div>
+            <div class="control-group">
+                <label>Max Latitude</label>
+                <input type="number" id="maxLat" value="38.0" step="0.1">
+            </div>
+            <div class="control-group">
+                <label>청크 크기</label>
+                <input type="number" id="chunkSize" value="2000" min="100" max="10000">
+            </div>
+            <div class="control-group">
+                <label>단순화 임계값</label>
+                <input type="number" id="simplification" value="0.0001" step="0.0001">
+            </div>
+        </div>
+
+        <!-- 시간 프리셋 버튼 -->
+        <div class="time-preset-buttons">
+            <button class="btn-secondary" onclick="setTimePreset(1)">최근 1시간</button>
+            <button class="btn-secondary" onclick="setTimePreset(6)">최근 6시간</button>
+            <button class="btn-secondary" onclick="setTimePreset(24)">최근 1일</button>
+            <button class="btn-secondary" onclick="setTimePreset(72)">최근 3일</button>
+        </div>
+
+        <!-- 거리/속도 필터 섹션 -->
+        <div class="filter-section">
+            <h4>거리/속도 필터 설정</h4>
+            <div class="filter-grid">
+                <div class="control-group">
+                    <label>최소 이동거리 (nm)</label>
+                    <input type="number" id="minDistance" placeholder="제한 없음" step="0.1">
+                </div>
+                <div class="control-group">
+                    <label>최대 이동거리 (nm)</label>
+                    <input type="number" id="maxDistance" placeholder="제한 없음" step="0.1">
+                </div>
+                <div class="control-group">
+                    <label>최소 평균속도 (knots)</label>
+                    <input type="number" id="minSpeed" placeholder="제한 없음" step="0.1">
+                </div>
+                <div class="control-group">
+                    <label>최대 평균속도 (knots)</label>
+                    <input type="number" id="maxSpeed" placeholder="제한 없음" step="0.1">
+                </div>
+            </div>
+            <div class="checkbox-group">
+                <input type="checkbox" id="includeInterBucket" checked>
+                <label for="includeInterBucket">Bucket 간 거리 포함</label>
+            </div>
+        </div>
+
+        <div class="button-group">
+            <button class="btn-primary" onclick="connect()">WebSocket 연결</button>
+            <button class="btn-danger" onclick="disconnect()">연결 해제</button>
+            <button class="btn-primary" onclick="startQuery()">쿼리 시작</button>
+            <button class="btn-secondary" onclick="cancelQuery()">쿼리 취소</button>
+        </div>
+
+        <div class="progress-container">
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressBar">0%</div>
+            </div>
+        </div>
+
+        <div class="results-panel">
+            <h3>실시간 통계</h3>
+            <div class="stats-grid">
+                <div class="stat-item">
+                    <div class="stat-value" id="receivedChunks">0</div>
+                    <div class="stat-label">수신 청크</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="receivedTracks">0</div>
+                    <div class="stat-label">수신 궤적</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="filteredVessels">0</div>
+                    <div class="stat-label">필터된 선박</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="elapsedTime">0s</div>
+                    <div class="stat-label">경과 시간</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="throughput">0</div>
+                    <div class="stat-label">초당 처리량</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="avgSpeed">0</div>
+                    <div class="stat-label">평균 속도 (kts)</div>
+                </div>
+            </div>
+        </div>
+
+        <h3>샘플 궤적 정보</h3>
+        <div class="sample-tracks" id="sampleTracks">
+            <div style="color: #6c757d; text-align: center;">궤적 데이터를 기다리는 중...</div>
+        </div>
+
+        <h3>처리 로그</h3>
+        <div class="log-container" id="logContainer"></div>
+    </div>
+
+    <script>
+        let stompClient = null;
+        let currentQueryId = null;
+        let startTime = null;
+        let stats = {
+            chunks: 0,
+            tracks: 0,
+            vessels: new Set(),
+            totalSpeed: 0,
+            speedCount: 0
+        };
+
+        // 페이지 로드 시 초기화
+        window.onload = function() {
+            setDefaultTimeRange();
+        };
+
+        // 기본 시간 범위 설정
+        function setDefaultTimeRange() {
+            const now = new Date();
+            const sixHoursAgo = new Date(now.getTime() - 6 * 60 * 60 * 1000);
+            
+            document.getElementById('startTime').value = formatDateTime(sixHoursAgo);
+            document.getElementById('endTime').value = formatDateTime(now);
+        }
+
+        // 시간 프리셋 설정
+        function setTimePreset(hours) {
+            const now = new Date();
+            const startTime = new Date(now.getTime() - hours * 60 * 60 * 1000);
+            
+            document.getElementById('startTime').value = formatDateTime(startTime);
+            document.getElementById('endTime').value = formatDateTime(now);
+            
+            addLog(`시간 범위 설정: 최근 ${hours}시간`, 'info');
+        }
+
+        // 날짜 포맷
+        function formatDateTime(date) {
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            const hours = String(date.getHours()).padStart(2, '0');
+            const minutes = String(date.getMinutes()).padStart(2, '0');
+            return `${year}-${month}-${day}T${hours}:${minutes}`;
+        }
+
+        function connect() {
+            updateStatus('connecting', '연결 중...');
+            
+            const socket = new SockJS('/ws-tracks');
+            stompClient = Stomp.over(socket);
+            
+            // 디버그 모드 비활성화
+            stompClient.debug = null;
+            
+            stompClient.connect({}, function (frame) {
+                updateStatus('connected', '연결됨');
+                addLog('WebSocket 연결 성공', 'success');
+                
+                // 궤적 데이터 구독
+                stompClient.subscribe('/user/queue/tracks/data', function (message) {
+                    const chunk = JSON.parse(message.body);
+                    handleTrackChunk(chunk);
+                });
+                
+                // 상태 업데이트 구독
+                stompClient.subscribe('/user/queue/tracks/status', function (message) {
+                    const status = JSON.parse(message.body);
+                    handleStatusUpdate(status);
+                });
+                
+                // 에러 구독
+                stompClient.subscribe('/user/queue/errors', function (message) {
+                    const error = JSON.parse(message.body);
+                    addLog(`에러: ${error.message}`, 'error');
+                });
+                
+            }, function (error) {
+                updateStatus('disconnected', '연결 실패');
+                addLog(`연결 실패: ${error}`, 'error');
+            });
+        }
+
+        function disconnect() {
+            if (stompClient !== null) {
+                stompClient.disconnect();
+            }
+            updateStatus('disconnected', '연결 안됨');
+            addLog('WebSocket 연결 해제', 'info');
+        }
+
+        function startQuery() {
+            if (!stompClient || !stompClient.connected) {
+                alert('먼저 WebSocket을 연결해주세요.');
+                return;
+            }
+            
+            resetStats();
+            startTime = Date.now();
+            
+            const request = {
+                startTime: document.getElementById('startTime').value + ':00',
+                endTime: document.getElementById('endTime').value + ':00',
+                viewport: {
+                    minLon: parseFloat(document.getElementById('minLon').value),
+                    maxLon: parseFloat(document.getElementById('maxLon').value),
+                    minLat: parseFloat(document.getElementById('minLat').value),
+                    maxLat: parseFloat(document.getElementById('maxLat').value)
+                },
+                chunkSize: parseInt(document.getElementById('chunkSize').value),
+                simplificationTolerance: parseFloat(document.getElementById('simplification').value),
+                includeStats: true
+            };
+
+            // 거리/속도 필터 추가
+            const minDist = document.getElementById('minDistance').value;
+            const maxDist = document.getElementById('maxDistance').value;
+            const minSpeed = document.getElementById('minSpeed').value;
+            const maxSpeed = document.getElementById('maxSpeed').value;
+            
+            if (minDist) request.minTotalDistance = parseFloat(minDist);
+            if (maxDist) request.maxTotalDistance = parseFloat(maxDist);
+            if (minSpeed) request.minAvgSpeed = parseFloat(minSpeed);
+            if (maxSpeed) request.maxAvgSpeed = parseFloat(maxSpeed);
+            
+            request.includeInterBucketDistance = document.getElementById('includeInterBucket').checked;
+            
+            stompClient.send('/app/tracks/query', {}, JSON.stringify(request));
+            addLog('쿼리 시작...', 'info');
+            
+            if (request.minTotalDistance || request.maxTotalDistance || request.minAvgSpeed || request.maxAvgSpeed) {
+                addLog(`필터 적용: 거리(${minDist || '-'}~${maxDist || '-'}nm), 속도(${minSpeed || '-'}~${maxSpeed || '-'}kts)`, 'filter');
+            }
+        }
+
+        function cancelQuery() {
+            if (currentQueryId && stompClient && stompClient.connected) {
+                stompClient.send(`/app/tracks/cancel/${currentQueryId}`, {}, '');
+                addLog('쿼리 취소 요청', 'warning');
+            }
+        }
+
+        function handleTrackChunk(chunk) {
+            currentQueryId = chunk.queryId;
+            stats.chunks++;
+            stats.tracks += chunk.tracks.length;
+            
+            // 선박 ID 수집
+            chunk.tracks.forEach(track => {
+                stats.vessels.add(`${track.sigSrcCd}_${track.targetId}`);
+                stats.totalSpeed += track.avgSpeed;
+                stats.speedCount++;
+            });
+            
+            updateStats();
+            
+            // 샘플 궤적 표시 (최초 5개만)
+            if (stats.chunks <= 5) {
+                displaySampleTracks(chunk.tracks.slice(0, 3));
+            }
+            
+            // 진행률 업데이트
+            if (chunk.stats) {
+                updateProgress(chunk.stats.progressPercentage);
+            }
+            
+            addLog(`청크 ${chunk.chunkIndex + 1} 수신: ${chunk.tracks.length}개 궤적`, 'success');
+            
+            if (chunk.isLastChunk) {
+                const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+                addLog(`스트리밍 완료! 총 ${stats.tracks}개 궤적, ${duration}초 소요`, 'success');
+            }
+        }
+
+        function handleStatusUpdate(status) {
+            addLog(`상태: ${status.status} - ${status.message}`, 'info');
+            
+            if (status.progressPercentage >= 0) {
+                updateProgress(status.progressPercentage);
+            }
+            
+            if (status.status === 'FILTERING') {
+                addLog('거리/속도 필터링 진행 중...', 'filter');
+            }
+        }
+
+        function updateStatus(type, text) {
+            const indicator = document.getElementById('statusIndicator');
+            const statusText = document.getElementById('statusText');
+            
+            indicator.className = 'status-indicator status-' + type;
+            statusText.textContent = text;
+        }
+
+        function updateProgress(percentage) {
+            const progressBar = document.getElementById('progressBar');
+            progressBar.style.width = percentage + '%';
+            progressBar.textContent = Math.round(percentage) + '%';
+        }
+
+        function updateStats() {
+            document.getElementById('receivedChunks').textContent = stats.chunks;
+            document.getElementById('receivedTracks').textContent = stats.tracks.toLocaleString();
+            document.getElementById('filteredVessels').textContent = stats.vessels.size;
+            
+            if (startTime) {
+                const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+                document.getElementById('elapsedTime').textContent = elapsed + 's';
+                
+                const throughput = elapsed > 0 ? (stats.tracks / elapsed).toFixed(1) : 0;
+                document.getElementById('throughput').textContent = throughput;
+            }
+            
+            if (stats.speedCount > 0) {
+                const avgSpeed = (stats.totalSpeed / stats.speedCount).toFixed(1);
+                document.getElementById('avgSpeed').textContent = avgSpeed;
+            }
+        }
+
+        function displaySampleTracks(tracks) {
+            const container = document.getElementById('sampleTracks');
+            
+            tracks.forEach(track => {
+                const trackDiv = document.createElement('div');
+                trackDiv.className = 'track-item';
+                
+                const header = document.createElement('div');
+                header.className = 'track-header';
+                header.textContent = `${track.sigSrcCd}_${track.targetId}`;
+                
+                const details = document.createElement('div');
+                details.className = 'track-details';
+                details.innerHTML = `
+                    시간: ${new Date(track.startTime).toLocaleString()} ~ ${new Date(track.endTime).toLocaleString()}<br>
+                    거리: ${track.distanceNm.toFixed(2)} nm | 
+                    평균속도: ${track.avgSpeed.toFixed(1)} kts | 
+                    최대속도: ${track.maxSpeed.toFixed(1)} kts<br>
+                    포인트 수: ${track.pointCount} | 
+                    Geometry: ${track.trackGeom.substring(0, 50)}...
+                `;
+                
+                trackDiv.appendChild(header);
+                trackDiv.appendChild(details);
+                container.appendChild(trackDiv);
+            });
+        }
+
+        function resetStats() {
+            stats = {
+                chunks: 0,
+                tracks: 0,
+                vessels: new Set(),
+                totalSpeed: 0,
+                speedCount: 0
+            };
+            updateStats();
+            updateProgress(0);
+            document.getElementById('sampleTracks').innerHTML = '<div style="color: #6c757d; text-align: center;">궤적 데이터를 기다리는 중...</div>';
+        }
+
+        function addLog(message, type = 'info') {
+            const logContainer = document.getElementById('logContainer');
+            const logEntry = document.createElement('div');
+            logEntry.className = 'log-entry log-' + type;
+            
+            const timestamp = new Date().toLocaleTimeString();
+            logEntry.textContent = `[${timestamp}] ${message}`;
+            
+            logContainer.appendChild(logEntry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+            
+            // 로그가 너무 많으면 오래된 것 제거
+            if (logContainer.children.length > 100) {
+                logContainer.removeChild(logContainer.firstChild);
+            }
+        }
+    </script>
+</body>
+</html>

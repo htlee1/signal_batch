@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chunked Track Streaming - GIS Visualization</title>
+    
+    <!-- Local CSS -->
+    <link href="/libs/css/bootstrap.min.css" rel="stylesheet">
+    <link href="/libs/css/bootstrap-icons.css" rel="stylesheet">
+    <link href="/libs/css/maplibre-gl.css" rel="stylesheet">
+    
+    <!-- Local JS -->
+    <script src="/libs/js/sockjs.min.js"></script>
+    <script src="/libs/js/stomp.min.js"></script>
+    <script src="/libs/js/maplibre-gl.js"></script>
+    <script src="/libs/js/deck.gl.min.js"></script>
+    
+    <style>
+        body { 
+            margin: 0; 
+            padding: 0; 
+            overflow: hidden;
+            font-family: Arial, sans-serif; 
+        }
+        
+        #mapContainer { 
+            position: absolute; 
+            top: 0; 
+            left: 0; 
+            width: 100%; 
+            height: 100vh; 
+            background: #1a1a1a; 
+        }
+        
+        .control-panel {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+            max-width: 400px;
+            z-index: 1000;
+        }
+        
+        .stats-panel {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+            z-index: 1000;
+            min-width: 250px;
+        }
+        
+        .render-mode {
+            margin: 10px 0;
+            padding: 10px;
+            background: #f0f0f0;
+            border-radius: 4px;
+        }
+        
+        .chunk-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            margin: 2px;
+            background: #ddd;
+            border-radius: 2px;
+        }
+        
+        .chunk-indicator.received { background: #4CAF50; }
+        .chunk-indicator.processing { background: #FFC107; }
+        .chunk-indicator.merged { background: #2196F3; }
+        
+        .performance-metric {
+            margin: 5px 0;
+            font-size: 14px;
+        }
+        
+        .progress {
+            width: 100%;
+            height: 20px;
+            background: #f0f0f0;
+            border-radius: 4px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+        
+        .progress-bar {
+            height: 100%;
+            background: #4CAF50;
+            transition: width 0.3s;
+        }
+        
+        button { 
+            margin: 5px; 
+            padding: 8px 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        
+        button:hover { background: #f0f0f0; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        
+        input, select {
+            margin: 5px;
+            padding: 5px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        
+        .vessel-legend {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #ddd;
+        }
+        
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin: 5px 0;
+        }
+        
+        .legend-color {
+            width: 30px;
+            height: 3px;
+            margin-right: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div id="mapContainer"></div>
+    
+    <div class="control-panel">
+        <h3>Chunked Track Streaming</h3>
+        
+        <div>
+            <label>Start: <input type="datetime-local" id="startTime" value="2025-07-29T07:00"></label>
+        </div>
+        <div>
+            <label>End: <input type="datetime-local" id="endTime" value="2025-07-29T13:00"></label>
+        </div>
+        
+        <div class="render-mode">
+            <h4>Merge Strategy</h4>
+            <label>
+                <input type="radio" name="mergeMode" value="background" checked>
+                Background Merge (Pre-process)
+            </label><br>
+            <label>
+                <input type="radio" name="mergeMode" value="render">
+                Render-time Merge (On-demand)
+            </label>
+        </div>
+        
+        <div>
+            <label>Max Vessels to Render: 
+                <input type="number" id="maxVessels" value="5000" min="10" max="5000">
+            </label>
+        </div>
+        
+        <div>
+            <button onclick="connect()" id="connectBtn">Connect</button>
+            <button onclick="disconnect()" id="disconnectBtn" disabled>Disconnect</button>
+            <button onclick="startQuery()" id="startBtn" disabled>Start</button>
+            <button onclick="cancelQuery()" id="cancelBtn" disabled>Cancel</button>
+            <button onclick="clearMap()">Clear Map</button>
+        </div>
+        
+        <div class="progress">
+            <div class="progress-bar" id="progressBar" style="width: 0%"></div>
+        </div>
+        
+        <div id="chunkStatus"></div>
+        
+        <div class="vessel-legend">
+            <h5>Speed Legend</h5>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #00ff00"></div>
+                <span>0-5 knots</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #ffff00"></div>
+                <span>5-15 knots</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #ff0000"></div>
+                <span>15+ knots</span>
+            </div>
+        </div>
+    </div>
+    
+    <div class="stats-panel">
+        <h4>Performance Metrics</h4>
+        <div class="performance-metric">
+            <strong>Connection:</strong> <span id="connectionStatus">Disconnected</span>
+        </div>
+        <div class="performance-metric">
+            <strong>Chunks:</strong> <span id="chunkCount">0/0</span>
+        </div>
+        <div class="performance-metric">
+            <strong>Vessels:</strong> <span id="vesselCount">0</span>
+        </div>
+        <div class="performance-metric">
+            <strong>Total Tracks:</strong> <span id="trackCount">0</span>
+        </div>
+        <div class="performance-metric">
+            <strong>Points Rendered:</strong> <span id="pointCount">0</span>
+        </div>
+        <div class="performance-metric">
+            <strong>Merge Time:</strong> <span id="mergeTime">0ms</span>
+        </div>
+        <div class="performance-metric">
+            <strong>Render FPS:</strong> <span id="fps">0</span>
+        </div>
+        <div class="performance-metric">
+            <strong>Memory:</strong> <span id="memoryUsage">0 MB</span>
+        </div>
+    </div>
+
+    <script>
+        // Global variables
+        let map, deckOverlay;
+        let stompClient = null;
+        let currentQueryId = null;
+        
+        // Data storage
+        const chunks = new Map();
+        const vesselTracks = new Map();
+        let rawTracks = [];
+        
+        // Performance tracking
+        let frameCount = 0;
+        
+        // Initialize map (same as track-streaming-gis.html)
+        function initializeMap() {
+            map = new maplibregl.Map({
+                container: 'mapContainer',
+                style: {
+                    version: 8,
+                    sources: {
+                        'raster-tiles': {
+                            type: 'raster',
+                            tiles: ['/api/tiles/world/{z}/{x}/{y}.webp'],
+                            tileSize: 256,
+                            attribution: 'Local Tile Server'
+                        }
+                    },
+                    layers: [{
+                        id: 'simple-tiles',
+                        type: 'raster',
+                        source: 'raster-tiles',
+                        minzoom: 0,
+                        maxzoom: 22
+                    }]
+                },
+                center: [128, 35.5],
+                zoom: 6
+            });
+            
+            // deck.gl overlay
+            deckOverlay = new deck.MapboxOverlay({
+                interleaved: true,
+                layers: []
+            });
+            
+            map.addControl(deckOverlay);
+            map.addControl(new maplibregl.NavigationControl());
+            
+            map.on('load', () => {
+                console.log('Map loaded successfully');
+                startFPSMonitoring();
+            });
+        }
+        
+        // WebSocket connection
+        function connect() {
+            const socket = new SockJS('/ws-tracks');
+            stompClient = Stomp.over(socket);
+            
+            stompClient.connect({}, frame => {
+                console.log('Connected:', frame);
+                updateConnectionStatus(true);
+                
+                // Subscribe to channels
+                stompClient.subscribe('/user/queue/tracks/response', handleResponse);
+                stompClient.subscribe('/user/queue/tracks/status', handleStatus);
+                stompClient.subscribe('/user/queue/tracks/chunk', handleChunk);
+                stompClient.subscribe('/user/queue/errors', handleError);
+                
+                document.getElementById('connectBtn').disabled = true;
+                document.getElementById('disconnectBtn').disabled = false;
+                document.getElementById('startBtn').disabled = false;
+            });
+        }
+        
+        function disconnect() {
+            if (stompClient) {
+                stompClient.disconnect();
+            }
+            updateConnectionStatus(false);
+            document.getElementById('connectBtn').disabled = false;
+            document.getElementById('disconnectBtn').disabled = true;
+            document.getElementById('startBtn').disabled = true;
+            document.getElementById('cancelBtn').disabled = true;
+        }
+        
+        function startQuery() {
+            const request = {
+                startTime: document.getElementById('startTime').value + ':00',
+                endTime: document.getElementById('endTime').value + ':00',
+                viewport: {
+                    minLon: 120,
+                    maxLon: 132,
+                    minLat: 30,
+                    maxLat: 38
+                },
+                chunkedMode: true,
+                chunkSize: 10000
+            };
+            
+            // Clear previous data
+            chunks.clear();
+            vesselTracks.clear();
+            rawTracks = [];
+            updateLayers([]);
+            updateStats();
+            
+            console.log('Starting query:', request);
+            stompClient.send('/app/tracks/query', {}, JSON.stringify(request));
+            
+            document.getElementById('startBtn').disabled = true;
+            document.getElementById('cancelBtn').disabled = false;
+        }
+        
+        function cancelQuery() {
+            if (currentQueryId) {
+                stompClient.send('/app/tracks/cancel/' + currentQueryId, {}, '');
+            }
+        }
+        
+        function handleResponse(message) {
+            const response = JSON.parse(message.body);
+            console.log('Response:', response);
+            if (response.status === 'STARTED') {
+                currentQueryId = response.queryId;
+            }
+        }
+        
+        function handleStatus(message) {
+            const status = JSON.parse(message.body);
+            console.log('Status:', status);
+            
+            document.getElementById('progressBar').style.width = status.progressPercentage + '%';
+            
+            if (status.status === 'COMPLETED' || status.status === 'ERROR') {
+                document.getElementById('startBtn').disabled = false;
+                document.getElementById('cancelBtn').disabled = true;
+                currentQueryId = null;
+            }
+        }
+        
+        function handleChunk(message) {
+            const startTime = performance.now();
+            const chunk = JSON.parse(message.body);
+            
+            console.log(`Chunk ${chunk.chunkIndex}: ${chunk.tracks.length} tracks`);
+            
+            // Store chunk
+            chunks.set(chunk.chunkIndex, chunk);
+            updateChunkIndicators();
+            
+            // Store raw tracks for render-time merge
+            rawTracks.push(...chunk.tracks);
+            
+            // Check merge mode
+            const mergeMode = document.querySelector('input[name="mergeMode"]:checked').value;
+            
+            if (mergeMode === 'background') {
+                // Background merge
+                mergeAndRender();
+            } else {
+                // Render-time merge - just render all tracks
+                renderTracks(chunk.tracks);
+            }
+            
+            const mergeTime = performance.now() - startTime;
+            document.getElementById('mergeTime').textContent = mergeTime.toFixed(2) + 'ms';
+            
+            updateStats();
+        }
+        
+        function handleError(message) {
+            console.error('Error:', message.body);
+            alert('Error: ' + message.body);
+        }
+        
+        function mergeAndRender() {
+            const startTime = performance.now();
+            
+            // Clear vessel tracks for fresh merge
+            vesselTracks.clear();
+            
+            // Process all chunks in order
+            for (let i = 0; i < chunks.size; i++) {
+                if (!chunks.has(i)) break;
+                
+                const chunk = chunks.get(i);
+                chunk.tracks.forEach(track => {
+                    const vesselId = `${track.sigSrcCd}_${track.targetId}`;
+                    if (!vesselTracks.has(vesselId)) {
+                        vesselTracks.set(vesselId, {
+                            id: vesselId,
+                            segments: [],
+                            avgSpeed: 0,
+                            totalDistance: 0
+                        });
+                    }
+                    
+                    const vessel = vesselTracks.get(vesselId);
+                    vessel.segments.push(track);
+                    vessel.totalDistance += track.distanceNm || 0;
+                    vessel.avgSpeed = Math.max(vessel.avgSpeed, track.avgSpeed || 0);
+                });
+            }
+            
+            // Convert to array and limit vessels
+            const maxVessels = parseInt(document.getElementById('maxVessels').value);
+            const vesselArray = Array.from(vesselTracks.values())
+                .sort((a, b) => b.totalDistance - a.totalDistance)
+                .slice(0, maxVessels);
+            
+            // Create deck.gl layers
+            const layers = vesselArray.map(vessel => {
+                const coordinates = vessel.segments.flatMap(seg => 
+                    parseLineStringM(seg.trackGeom)
+                );
+                
+                return new deck.PathLayer({
+                    id: `vessel-${vessel.id}`,
+                    data: [{
+                        path: coordinates,
+                        speed: vessel.avgSpeed
+                    }],
+                    getPath: d => d.path,
+                    getColor: d => getSpeedColor(d.speed),
+                    getWidth: 2,
+                    widthUnits: 'pixels',
+                    capRounded: true,
+                    jointRounded: true
+                });
+            });
+            
+            const mergeTime = performance.now() - startTime;
+            console.log(`Merged ${vesselArray.length} vessels in ${mergeTime.toFixed(2)}ms`);
+            
+            updateLayers(layers);
+        }
+        
+        function renderTracks(tracks) {
+            // Direct rendering without merge
+            const layers = tracks.map((track, idx) => {
+                const coordinates = parseLineStringM(track.trackGeom);
+                
+                return new deck.PathLayer({
+                    id: `track-${track.chunkIndex}-${idx}`,
+                    data: [{
+                        path: coordinates,
+                        speed: track.avgSpeed
+                    }],
+                    getPath: d => d.path,
+                    getColor: d => getSpeedColor(d.speed),
+                    getWidth: 2,
+                    widthUnits: 'pixels',
+                    opacity: 0.8
+                });
+            });
+            
+            // Append to existing layers
+            const currentLayers = (deckOverlay && deckOverlay.props && deckOverlay.props.layers) || [];
+            updateLayers([...currentLayers, ...layers]);
+        }
+        
+        function parseLineStringM(wkt) {
+            if (!wkt || !wkt.startsWith('LINESTRING')) return [];
+            
+            const coords = wkt.match(/[\d.-]+\s+[\d.-]+(\s+[\d.-]+)?/g);
+            if (!coords) return [];
+            
+            return coords.map(coord => {
+                const parts = coord.trim().split(/\s+/);
+                return [parseFloat(parts[0]), parseFloat(parts[1])];
+            });
+        }
+        
+        function getSpeedColor(speed) {
+            if (speed < 5) return [0, 255, 0, 200];
+            if (speed < 15) return [255, 255, 0, 200];
+            return [255, 0, 0, 200];
+        }
+        
+        function updateLayers(layers) {
+            if (deckOverlay) {
+                deckOverlay.setProps({ layers });
+                frameCount++;
+            }
+        }
+        
+        function updateStats() {
+            document.getElementById('chunkCount').textContent = `${chunks.size}/${chunks.size}`;
+            document.getElementById('vesselCount').textContent = vesselTracks.size;
+            document.getElementById('trackCount').textContent = rawTracks.length;
+            
+            // Count points
+            let totalPoints = 0;
+            if (deckOverlay && deckOverlay.props) {
+                const layers = deckOverlay.props.layers || [];
+                layers.forEach(layer => {
+                    if (layer.props.data && layer.props.data[0] && layer.props.data[0].path) {
+                        totalPoints += layer.props.data[0].path.length;
+                    }
+                });
+            }
+            document.getElementById('pointCount').textContent = totalPoints;
+            
+            // Memory usage (approximate)
+            if (performance.memory) {
+                const memMB = (performance.memory.usedJSHeapSize / 1024 / 1024).toFixed(2);
+                document.getElementById('memoryUsage').textContent = memMB + ' MB';
+            }
+        }
+        
+        function updateConnectionStatus(connected) {
+            document.getElementById('connectionStatus').textContent = connected ? 'Connected' : 'Disconnected';
+            document.getElementById('connectionStatus').style.color = connected ? 'green' : 'red';
+        }
+        
+        function updateChunkIndicators() {
+            const container = document.getElementById('chunkStatus');
+            const indicators = [];
+            
+            for (let i = 0; i < Math.min(chunks.size, 50); i++) {
+                const indicator = `<span class="chunk-indicator ${chunks.has(i) ? 'received' : ''}"></span>`;
+                indicators.push(indicator);
+            }
+            
+            if (chunks.size > 50) {
+                indicators.push(`<span>... +${chunks.size - 50} more</span>`);
+            }
+            
+            container.innerHTML = indicators.join('');
+        }
+        
+        function clearMap() {
+            chunks.clear();
+            vesselTracks.clear();
+            rawTracks = [];
+            updateLayers([]);
+            updateStats();
+            document.getElementById('progressBar').style.width = '0%';
+            document.getElementById('chunkStatus').innerHTML = '';
+        }
+        
+        function startFPSMonitoring() {
+            let lastTime = performance.now();
+            let frames = 0;
+            
+            setInterval(() => {
+                const currentTime = performance.now();
+                const fps = Math.round(frames * 1000 / (currentTime - lastTime));
+                document.getElementById('fps').textContent = fps;
+                frames = 0;
+                lastTime = currentTime;
+            }, 1000);
+            
+            // Count frames
+            function countFrame() {
+                frames++;
+                requestAnimationFrame(countFrame);
+            }
+            countFrame();
+        }
+        
+        // Initialize on load
+        window.onload = () => {
+            initializeMap();
+        };
+    </script>
+</body>
+</html>

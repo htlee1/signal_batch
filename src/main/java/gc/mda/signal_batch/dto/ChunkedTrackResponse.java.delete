@@ -1,0 +1,39 @@
+package gc.mda.signal_batch.dto;
+
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+import java.util.List;
+
+/**
+ * 청크 스트리밍 응답 DTO
+ */
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class ChunkedTrackResponse {
+    private String queryId;
+    private Integer chunkIndex;
+    private Integer totalChunks;
+    private Boolean isLastChunk;
+    
+    // 압축된 트랙 데이터
+    private List<CompactVesselTrack> compactTracks;
+    
+    // 통계 정보
+    private ChunkStats stats;
+    
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class ChunkStats {
+        private Integer vesselCount;
+        private Integer totalPoints;
+        private Double progressPercentage;
+        private Long processingTimeMs;
+    }
+}

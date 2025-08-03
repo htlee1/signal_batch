@@ -1,0 +1,307 @@
+package gc.mda.signal_batch.service;
+
+import gc.mda.signal_batch.dto.GisBoundaryResponse;
+import gc.mda.signal_batch.dto.TrackResponse;
+import gc.mda.signal_batch.dto.VesselStatsResponse;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Service;
+
+import javax.sql.DataSource;
+import java.math.BigDecimal;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class GisService {
+    
+    private final DataSource queryDataSource;
+    
+    public List<GisBoundaryResponse> getHaeguBoundaries() {
+        JdbcTemplate jdbcTemplate = new JdbcTemplate(queryDataSource);
+        
+        String sql = """
+            SELECT haegu_no, center_lat, center_lon,
+                   ST_AsGeoJSON(geom) as geom_json
+            FROM signal.t_haegu_definitions
+            ORDER BY haegu_no
+        """;
+        
+        return jdbcTemplate.query(sql, (rs, rowNum) -> 
+            GisBoundaryResponse.builder()
+                .haeguNo(rs.getInt("haegu_no"))
+                .centerLat(rs.getDouble("center_lat"))
+                .centerLon(rs.getDouble("center_lon"))
+                .geomJson(rs.getString("geom_json"))
+                .build()
+        );
+    }
+    
+    public Map<Integer, VesselStatsResponse> getHaeguVesselStats(int minutes) {
+        JdbcTemplate jdbcTemplate = new JdbcTemplate(queryDataSource);
+        
+        String sql = """
+            SELECT haegu_no,
+                   COUNT(DISTINCT CONCAT(sig_src_cd, '_', target_id)) as vessel_count,
+                   COALESCE(SUM(distance_nm), 0) as total_distance,
+                   COALESCE(AVG(avg_speed), 0) as avg_speed,
+                   COUNT(*) as active_tracks
+            FROM signal.t_grid_vessel_tracks
+            WHERE time_bucket >= NOW() - INTERVAL '%d minutes'
+            GROUP BY haegu_no
+        """.formatted(minutes);
+        
+        Map<Integer, VesselStatsResponse> result = new HashMap<>();
+        
+        jdbcTemplate.query(sql, rs -> {
+            result.put(rs.getInt("haegu_no"), 
+                VesselStatsResponse.builder()
+                    .vesselCount(rs.getInt("vessel_count"))
+                    .totalDistance(rs.getBigDecimal("total_distance"))
+                    .avgSpeed(rs.getBigDecimal("avg_speed"))
+                    .activeTracks(rs.getInt("active_tracks"))
+                    .build()
+            );
+        });
+        
+        return result;
+    }
+    
+    public List<GisBoundaryResponse> getAreaBoundaries() {
+        JdbcTemplate jdbcTemplate = new JdbcTemplate(queryDataSource);
+        
+        String sql = """
+            SELECT area_id, area_name,
+                   ST_Y(ST_Centroid(area_geom)) as center_lat,
+                   ST_X(ST_Centroid(area_geom)) as center_lon,
+                   ST_AsGeoJSON(area_geom) as geom_json
+            FROM signal.t_areas
+            ORDER BY area_id
+        """;
+        
+        return jdbcTemplate.query(sql, (rs, rowNum) -> 
+            GisBoundaryResponse.builder()
+                .areaId(rs.getString("area_id"))
+                .areaName(rs.getString("area_name"))
+                .centerLat(rs.getDouble("center_lat"))
+                .centerLon(rs.getDouble("center_lon"))
+                .geomJson(rs.getString("geom_json"))
+                .build()
+        );
+    }
+    
+    public Map<String, VesselStatsResponse> getAreaVesselStats(int minutes) {
+        JdbcTemplate jdbcTemplate = new JdbcTemplate(queryDataSource);
+        
+        String sql = """
+            SELECT area_id,
+                   COUNT(DISTINCT CONCAT(sig_src_cd, '_', target_id)) as vessel_count,
+                   COALESCE(SUM(distance_nm), 0) as total_distance,
+                   COALESCE(AVG(avg_speed), 0) as avg_speed,
+                   COUNT(*) as active_tracks
+            FROM signal.t_area_vessel_tracks
+            WHERE time_bucket >= NOW() - INTERVAL '%d minutes'
+            GROUP BY area_id
+        """.formatted(minutes);
+        
+        Map<String, VesselStatsResponse> result = new HashMap<>();
+        
+        jdbcTemplate.query(sql, rs -> {
+            result.put(rs.getString("area_id"), 
+                VesselStatsResponse.builder()
+                    .vesselCount(rs.getInt("vessel_count"))
+                    .totalDistance(rs.getBigDecimal("total_distance"))
+                    .avgSpeed(rs.getBigDecimal("avg_speed"))
+                    .activeTracks(rs.getInt("active_tracks"))
+                    .build()
+            );
+        });
+        
+        return result;
+    }
+    
+    public List<TrackResponse> getHaeguTracks(Integer haeguNo, int minutes) {
+        JdbcTemplate jdbcTemplate = new JdbcTemplate(queryDataSource);
+        List<TrackResponse> allTracks = new ArrayList<>();
+        
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime startTime = now.minusMinutes(minutes);
+        
+        // 1시간 이상인 경우 여러 테이블 조합
+        if (minutes > 60) {
+            // 현재 시간의 정시
+            LocalDateTime currentHour = now.withMinute(0).withSecond(0).withNano(0);
+            
+            if (minutes <= 1440) { // 24시간 이하
+                // 1. hourly 테이블에서 과거 데이터 조회
+                String hourlySql = """
+                    SELECT DISTINCT t.sig_src_cd, t.target_id, t.time_bucket,
+                           ST_AsText(t.track_geom) as track_geom,
+                           t.distance_nm, t.avg_speed, t.max_speed, t.point_count
+                    FROM signal.t_vessel_tracks_hourly t
+                    WHERE EXISTS (
+                        SELECT 1 FROM signal.t_grid_vessel_tracks g
+                        WHERE g.sig_src_cd = t.sig_src_cd 
+                            AND g.target_id = t.target_id 
+                            AND g.haegu_no = %d
+                            AND g.time_bucket >= '%s'
+                    )
+                    AND t.time_bucket >= '%s'
+                    AND t.time_bucket < '%s'
+                    ORDER BY t.sig_src_cd, t.target_id, t.time_bucket
+                """.formatted(haeguNo, startTime, startTime, currentHour);
+                
+                allTracks.addAll(jdbcTemplate.query(hourlySql, this::mapTrackResponse));
+            } else {
+                // daily 테이블 사용 (추후 구현)
+            }
+            
+            // 2. 5min 테이블에서 최근 데이터 조회 (아직 집계되지 않은 부분)
+            String recentSql = """
+                SELECT DISTINCT t.sig_src_cd, t.target_id, t.time_bucket,
+                       ST_AsText(t.track_geom) as track_geom,
+                       t.distance_nm, t.avg_speed, t.max_speed, t.point_count
+                FROM signal.t_vessel_tracks_5min t
+                WHERE EXISTS (
+                    SELECT 1 FROM signal.t_grid_vessel_tracks g
+                    WHERE g.sig_src_cd = t.sig_src_cd 
+                        AND g.target_id = t.target_id 
+                        AND g.haegu_no = %d
+                        AND g.time_bucket >= '%s'
+                )
+                AND t.time_bucket >= '%s'
+                ORDER BY t.sig_src_cd, t.target_id, t.time_bucket
+            """.formatted(haeguNo, currentHour, currentHour);
+            
+            allTracks.addAll(jdbcTemplate.query(recentSql, this::mapTrackResponse));
+            
+        } else {
+            // 1시간 이하는 5분 테이블만 사용
+            String sql = """
+                SELECT DISTINCT t.sig_src_cd, t.target_id, t.time_bucket,
+                       ST_AsText(t.track_geom) as track_geom,
+                       t.distance_nm, t.avg_speed, t.max_speed, t.point_count
+                FROM signal.t_vessel_tracks_5min t
+                WHERE EXISTS (
+                    SELECT 1 FROM signal.t_grid_vessel_tracks g
+                    WHERE g.sig_src_cd = t.sig_src_cd 
+                        AND g.target_id = t.target_id 
+                        AND g.haegu_no = %d
+                        AND g.time_bucket >= NOW() - INTERVAL '%d minutes'
+                )
+                AND t.time_bucket >= NOW() - INTERVAL '%d minutes'
+                ORDER BY t.sig_src_cd, t.target_id, t.time_bucket
+            """.formatted(haeguNo, minutes, minutes);
+            
+            allTracks = jdbcTemplate.query(sql, this::mapTrackResponse);
+        }
+        
+        log.debug("Fetched {} tracks for haegu {} in last {} minutes", 
+                  allTracks.size(), haeguNo, minutes);
+        
+        return allTracks;
+    }
+    
+    private TrackResponse mapTrackResponse(ResultSet rs, int rowNum) throws SQLException {
+        return TrackResponse.builder()
+                .sigSrcCd(rs.getString("sig_src_cd"))
+                .targetId(rs.getString("target_id"))
+                .timeBucket(rs.getObject("time_bucket", LocalDateTime.class))
+                .trackGeom(rs.getString("track_geom"))
+                .distanceNm(rs.getBigDecimal("distance_nm"))
+                .avgSpeed(rs.getBigDecimal("avg_speed"))
+                .maxSpeed(rs.getBigDecimal("max_speed"))
+                .pointCount(rs.getInt("point_count"))
+                .build();
+    }
+    
+    public List<TrackResponse> getAreaTracks(String areaId, int minutes) {
+        JdbcTemplate jdbcTemplate = new JdbcTemplate(queryDataSource);
+        List<TrackResponse> allTracks = new ArrayList<>();
+        
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime startTime = now.minusMinutes(minutes);
+        
+        // 1시간 이상인 경우 여러 테이블 조합
+        if (minutes > 60) {
+            // 현재 시간의 정시
+            LocalDateTime currentHour = now.withMinute(0).withSecond(0).withNano(0);
+            
+            if (minutes <= 1440) { // 24시간 이하
+                // 1. hourly 테이블에서 과거 데이터 조회
+                String hourlySql = """
+                    SELECT DISTINCT t.sig_src_cd, t.target_id, t.time_bucket,
+                           ST_AsText(t.track_geom) as track_geom,
+                           t.distance_nm, t.avg_speed, t.max_speed, t.point_count
+                    FROM signal.t_vessel_tracks_hourly t
+                    WHERE EXISTS (
+                        SELECT 1 FROM signal.t_area_vessel_tracks a
+                        WHERE a.sig_src_cd = t.sig_src_cd 
+                            AND a.target_id = t.target_id 
+                            AND a.area_id = '%s'
+                            AND a.time_bucket >= '%s'
+                    )
+                    AND t.time_bucket >= '%s'
+                    AND t.time_bucket < '%s'
+                    ORDER BY t.sig_src_cd, t.target_id, t.time_bucket
+                """.formatted(areaId, startTime, startTime, currentHour);
+                
+                allTracks.addAll(jdbcTemplate.query(hourlySql, this::mapTrackResponse));
+            } else {
+                // daily 테이블 사용 (추후 구현)
+            }
+            
+            // 2. 5min 테이블에서 최근 데이터 조회 (아직 집계되지 않은 부분)
+            String recentSql = """
+                SELECT DISTINCT t.sig_src_cd, t.target_id, t.time_bucket,
+                       ST_AsText(t.track_geom) as track_geom,
+                       t.distance_nm, t.avg_speed, t.max_speed, t.point_count
+                FROM signal.t_vessel_tracks_5min t
+                WHERE EXISTS (
+                    SELECT 1 FROM signal.t_area_vessel_tracks a
+                    WHERE a.sig_src_cd = t.sig_src_cd 
+                        AND a.target_id = t.target_id 
+                        AND a.area_id = '%s'
+                        AND a.time_bucket >= '%s'
+                )
+                AND t.time_bucket >= '%s'
+                ORDER BY t.sig_src_cd, t.target_id, t.time_bucket
+            """.formatted(areaId, currentHour, currentHour);
+            
+            allTracks.addAll(jdbcTemplate.query(recentSql, this::mapTrackResponse));
+            
+        } else {
+            // 1시간 이하는 5분 테이블만 사용
+            String sql = """
+                SELECT DISTINCT t.sig_src_cd, t.target_id, t.time_bucket,
+                       ST_AsText(t.track_geom) as track_geom,
+                       t.distance_nm, t.avg_speed, t.max_speed, t.point_count
+                FROM signal.t_vessel_tracks_5min t
+                WHERE EXISTS (
+                    SELECT 1 FROM signal.t_area_vessel_tracks a
+                    WHERE a.sig_src_cd = t.sig_src_cd 
+                        AND a.target_id = t.target_id 
+                        AND a.area_id = '%s'
+                        AND a.time_bucket >= NOW() - INTERVAL '%d minutes'
+                )
+                AND t.time_bucket >= NOW() - INTERVAL '%d minutes'
+                ORDER BY t.sig_src_cd, t.target_id, t.time_bucket
+            """.formatted(areaId, minutes, minutes);
+            
+            allTracks = jdbcTemplate.query(sql, this::mapTrackResponse);
+        }
+        
+        log.debug("Fetched {} tracks for area {} in last {} minutes", 
+                  allTracks.size(), areaId, minutes);
+        
+        return allTracks;
+    }
+}

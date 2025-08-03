@@ -1,0 +1,1381 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GIS Monitoring - Vessel Batch</title>
+    <!-- Local CSS -->
+    <link href="/libs/css/bootstrap.min.css" rel="stylesheet">
+    <link href="/libs/css/bootstrap-icons.css" rel="stylesheet">
+    <link href="/libs/css/maplibre-gl.css" rel="stylesheet">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+        }
+
+        #mapContainer {
+            width: 100vw;
+            height: 100vh;
+            position: relative;
+            background: #1a1a1a;
+        }
+
+        .control-panel {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 15px;
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            z-index: 1000;
+            max-width: 400px;
+            min-width: 350px;
+        }
+
+        .map-controls {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 1000;
+            background: white;
+            padding: 10px;
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            width: 280px;
+        }
+
+        .vessel-tooltip {
+            position: absolute;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            z-index: 9999;
+            max-width: 300px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .legend {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 15px;
+            border-radius: 4px;
+            font-size: 12px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            z-index: 1002;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin: 5px 0;
+        }
+
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            margin-right: 8px;
+            border: 1px solid #333;
+        }
+
+        .legend-gradient {
+            width: 200px;
+            height: 20px;
+            margin: 10px 0;
+            background: linear-gradient(to right, #e0e0e0 0%, #90EE90 25%, #FFD700 50%, #FFA500 75%, #FF4500 100%);
+            border: 1px solid #333;
+        }
+
+        .legend-labels {
+            display: flex;
+            justify-content: space-between;
+            font-size: 11px;
+            margin-top: 5px;
+        }
+
+        .track-info-panel {
+            position: absolute;
+            top: 10px;
+            left: 420px;  /* 메인 패널 우측으로 이동 */
+            width: 350px;
+            max-height: 400px;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 4px;
+            padding: 15px;
+            overflow-y: auto;
+            display: none;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+            z-index: 1001;
+        }
+
+        .vessel-item {
+            padding: 8px;
+            border-bottom: 1px solid #ddd;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            transition: background 0.2s;
+        }
+
+        .vessel-item:hover {
+            background: #f0f0f0;
+        }
+
+        .vessel-item.selected {
+            background: #e3f2fd;
+        }
+
+        .vessel-checkbox {
+            margin-right: 10px;
+        }
+
+        .vessel-info {
+            flex: 1;
+        }
+
+        .sort-controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+            align-items: center;
+        }
+
+        .filter-controls {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+
+        .selected-count {
+            background: #007bff;
+            color: white;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            margin-left: 10px;
+        }
+    </style>
+</head>
+<body>
+<div id="mapContainer">
+    <div class="control-panel">
+        <h5 class="mb-3">GIS Monitoring</h5>
+        <div class="mb-2">
+            <label class="form-label">Time Range</label>
+            <select class="form-select form-select-sm" id="gisTimeRange">
+                <option value="60" selected>Last 1 hour</option>
+                <option value="180">Last 3 hours</option>
+                <option value="360">Last 6 hours</option>
+                <option value="720">Last 12 hours</option>
+                <option value="1440">Last 24 hours</option>
+            </select>
+        </div>
+        <div class="mb-2">
+            <label class="form-label">Layer Type</label>
+            <select class="form-select form-select-sm" id="gisLayerType">
+                <option value="haegu">Haegu (대해구)</option>
+                <option value="area">Custom Areas</option>
+                <option value="both" selected>Both</option>
+            </select>
+        </div>
+        <div class="mb-2">
+            <label class="form-label">Track Period</label>
+            <select class="form-select form-select-sm" id="trackPeriod">
+                <option value="60">Last 1 hour</option>
+                <option value="180">Last 3 hours</option>
+                <option value="360">Last 6 hours</option>
+                <option value="720">Last 12 hours</option>
+                <option value="1440">Last 24 hours</option>
+            </select>
+        </div>
+        <button class="btn btn-primary btn-sm w-100 mb-3" onclick="refreshGisData()">
+            <i class="bi bi-arrow-clockwise"></i> Refresh
+        </button>
+
+        <!-- Vessel List Section -->
+        <div id="vesselListSection" style="display: none;">
+            <hr>
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <div class="d-flex align-items-center">
+                    <h6 id="vesselListTitle" class="mb-0">Vessels in Area</h6>
+                    <span class="selected-count" id="selectedCount" style="display: none;">0</span>
+                </div>
+                <button class="btn btn-sm btn-secondary" onclick="$('#vesselListSection').slideUp()">
+                    <i class="bi bi-chevron-up"></i>
+                </button>
+            </div>
+
+            <!-- Sort Controls -->
+            <div class="sort-controls">
+                <label class="form-label mb-0 me-2">Sort by:</label>
+                <select class="form-select form-select-sm" id="sortBy" style="width: auto;">
+                    <option value="id">ID</option>
+                    <option value="speed">Speed</option>
+                    <option value="distance">Distance</option>
+                </select>
+                <select class="form-select form-select-sm" id="sortOrder" style="width: auto;">
+                    <option value="asc">Asc</option>
+                    <option value="desc">Desc</option>
+                </select>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="mb-2">
+                <button class="btn btn-sm btn-primary" onclick="selectAllVessels()">
+                    <i class="bi bi-check-all"></i> Select All
+                </button>
+                <button class="btn btn-sm btn-secondary" onclick="deselectAllVessels()">
+                    <i class="bi bi-x-square"></i> Clear All
+                </button>
+                <button class="btn btn-sm btn-success" onclick="showSelectedTracks()">
+                    <i class="bi bi-geo-alt"></i> Show Tracks
+                </button>
+            </div>
+
+            <div id="vesselListContent" style="max-height: 400px; overflow-y: auto;"></div>
+        </div>
+    </div>
+
+    <div class="map-controls">
+        <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="showTracks">
+            <label class="form-check-label" for="showTracks">
+                Show Vessel Tracks
+            </label>
+        </div>
+        <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="showAllTracks">
+            <label class="form-check-label" for="showAllTracks">
+                Show All Tracks
+            </label>
+        </div>
+        <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="showHeatmap">
+            <label class="form-check-label" for="showHeatmap">
+                Show Density Heatmap
+            </label>
+        </div>
+
+        <!-- Track Filters -->
+        <div class="filter-controls">
+            <h6>Track Filters</h6>
+            <div class="mb-2">
+                <label class="form-label small mb-1">Speed Range (kts)</label>
+                <div class="d-flex align-items-center gap-2">
+                    <input type="number" class="form-control form-control-sm" id="minSpeedFilter"
+                           min="0" max="50" value="0" step="0.5" style="width: 70px;">
+                    <span>-</span>
+                    <input type="number" class="form-control form-control-sm" id="maxSpeedFilter"
+                           min="0" max="50" value="50" step="0.5" style="width: 70px;">
+                </div>
+            </div>
+            <div class="mb-2">
+                <label class="form-label small mb-1">Distance Range (nm)</label>
+                <div class="d-flex align-items-center gap-2">
+                    <input type="number" class="form-control form-control-sm" id="minDistFilter"
+                           min="0" max="200" value="0" step="1" style="width: 70px;">
+                    <span>-</span>
+                    <input type="number" class="form-control form-control-sm" id="maxDistFilter"
+                           min="0" max="200" value="200" step="1" style="width: 70px;">
+                </div>
+            </div>
+            <button class="btn btn-sm btn-primary w-100" onclick="applyTrackFilters()">
+                <i class="bi bi-funnel"></i> Apply Filters
+            </button>
+            <button class="btn btn-sm btn-secondary w-100 mt-1" onclick="resetFilters()">
+                <i class="bi bi-arrow-counterclockwise"></i> Reset Filters
+            </button>
+        </div>
+    </div>
+
+    <div class="track-info-panel" id="trackInfoPanel">
+        <h5 id="trackPanelTitle">Area Information</h5>
+        <div id="trackPanelContent"></div>
+    </div>
+
+    <div class="legend">
+        <h6>Legend</h6>
+        <div class="mb-2"><strong>Vessel Count</strong></div>
+        <div class="legend-gradient"></div>
+        <div class="legend-labels">
+            <span>0</span>
+            <span>10</span>
+            <span>50</span>
+            <span>100</span>
+            <span>200+</span>
+        </div>
+        <hr class="my-2">
+        <div class="legend-item">
+            <div class="legend-color" style="background: rgba(0, 100, 200, 0.5); border: 2px solid #0064C8;"></div>
+            <span>Haegu Areas</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background: rgba(200, 100, 0, 0.5); border: 2px solid #C86400;"></div>
+            <span>Custom Areas</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background: #00ff00;"></div>
+            <span>Vessel Tracks</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background: #0080ff;"></div>
+            <span>Selected Tracks</span>
+        </div>
+    </div>
+</div>
+
+<div class="vessel-tooltip" id="vesselTooltip" style="display: none;"></div>
+
+<!-- Local JS -->
+<script src="/libs/js/jquery-3.6.0.min.js"></script>
+<script src="/libs/js/bootstrap.bundle.min.js"></script>
+<script src="/libs/js/maplibre-gl.js"></script>
+<script src="/libs/js/deck.gl.min.js"></script>
+
+<script>
+    // 전역 변수
+    let map;
+    let deckOverlay;
+    let gisData = {
+        haegus: [],
+        areas: [],
+        tracks: [],
+        allTracks: [],
+        filteredTracks: [],
+        vesselPositions: [],
+        haeguStats: {},
+        areaStats: {},
+        currentVesselList: [],
+        selectedVessels: new Set(),
+        currentArea: null  // 현재 선택된 영역 정보 저장
+    };
+
+    // 페이지 로드 시 맵 초기화
+    $(document).ready(function() {
+        initGisMap();
+
+        // 툴팁 요소가 맵 컨테이너 밖에 있는지 확인
+        if ($('#vesselTooltip').parent()[0] !== document.body) {
+            $('body').append($('#vesselTooltip'));
+        }
+
+        // 이벤트 핸들러
+        $('#showTracks').change(function() {
+            if (!$(this).is(':checked')) {
+                gisData.tracks = [];
+                gisData.selectedVessels.clear();
+                updateSelectedCount();
+            }
+            updateGisLayers();
+        });
+
+        $('#showAllTracks').change(function() {
+            if ($(this).is(':checked')) {
+                loadAllTracks();
+            } else {
+                gisData.allTracks = [];
+                gisData.filteredTracks = [];
+                updateGisLayers();
+            }
+        });
+
+        $('#showHeatmap').change(function() {
+            if ($(this).is(':checked')) {
+                alert('Density heatmap feature is coming soon!');
+                $(this).prop('checked', false);
+            }
+        });
+
+        $('#gisLayerType').change(function() {
+            loadGisData();
+        });
+
+        // 정렬 이벤트
+        $('#sortBy, #sortOrder').change(function() {
+            if (gisData.currentVesselList.length > 0) {
+                sortVesselList();
+                renderVesselList();
+            }
+        });
+    });
+
+    // GIS Map 초기화
+    function initGisMap() {
+        map = new maplibregl.Map({
+            container: 'mapContainer',
+            style: {
+                version: 8,
+                sources: {
+                    'local-tiles': {
+                        type: 'raster',
+                        tiles: ['/api/tiles/world/{z}/{x}/{y}.webp'],
+                        tileSize: 256,
+                        attribution: 'Local Tile Server'
+                    }
+                },
+                layers: [{
+                    id: 'base-tiles',
+                    type: 'raster',
+                    source: 'local-tiles',
+                    minzoom: 4,
+                    maxzoom: 14
+                }]
+            },
+            center: [126.0, 35.0],
+            zoom: 6
+        });
+
+        deckOverlay = new deck.MapboxOverlay({
+            layers: [],
+            getTooltip: ({object}) => object && {
+                html: object.tooltip || null,
+                style: {
+                    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                    color: '#000',
+                    fontSize: '12px',
+                    padding: '10px',
+                    borderRadius: '4px',
+                    boxShadow: '0 2px 4px rgba(0,0,0,0.3)'
+                }
+            }
+        });
+        map.addControl(deckOverlay);
+
+        map.on('load', () => {
+            loadGisData();
+        });
+    }
+
+    // GIS 데이터 로드
+    async function loadGisData() {
+        const timeRange = $('#gisTimeRange').val();
+        const layerType = $('#gisLayerType').val();
+
+        console.log(`Loading GIS data - timeRange: ${timeRange} minutes, layerType: ${layerType}`);
+
+        try {
+            if (layerType === 'haegu' || layerType === 'both') {
+                const haeguResponse = await $.get('/api/v1/haegu/boundaries');
+                gisData.haegus = haeguResponse;
+                console.log(`Loaded ${haeguResponse.length} haegu boundaries`);
+
+                const haeguStats = await $.get(`/api/v1/haegu/vessel-stats?minutes=${timeRange}`);
+                gisData.haeguStats = haeguStats;
+                console.log(`Loaded vessel stats for ${Object.keys(haeguStats).length} haegus`);
+            }
+
+            if (layerType === 'area' || layerType === 'both') {
+                const areaResponse = await $.get('/api/v1/areas/boundaries');
+                gisData.areas = areaResponse;
+                console.log(`Loaded ${areaResponse.length} area boundaries`);
+
+                const areaStats = await $.get(`/api/v1/areas/vessel-stats?minutes=${timeRange}`);
+                gisData.areaStats = areaStats;
+                console.log(`Loaded vessel stats for ${Object.keys(areaStats).length} areas`);
+            }
+
+            updateGisLayers();
+        } catch (error) {
+            console.error('Failed to load GIS data:', error);
+            alert('Failed to load GIS data. Check console for details.');
+        }
+    }
+
+    // 선박 수에 따른 색상 계산
+    function getVesselCountColor(count) {
+        if (count >= 200) return [255, 69, 0, 150];
+        if (count >= 100) return [255, 165, 0, 150];
+        if (count >= 50) return [255, 215, 0, 150];
+        if (count >= 10) return [144, 238, 144, 150];
+        if (count > 0) return [224, 224, 224, 150];
+        return [224, 224, 224, 50];
+    }
+
+    // GIS 레이어 업데이트
+    function updateGisLayers() {
+        const layers = [];
+        const layerType = $('#gisLayerType').val();
+
+        // Haegu 레이어
+        if ((layerType === 'haegu' || layerType === 'both') && gisData.haegus && gisData.haegus.length > 0) {
+            layers.push(new deck.GeoJsonLayer({
+                id: 'haegu-layer',
+                data: {
+                    type: 'FeatureCollection',
+                    features: gisData.haegus.map(haegu => ({
+                        type: 'Feature',
+                        properties: {
+                            haegu_no: haegu.haegu_no,
+                            vessel_count: gisData.haeguStats?.[haegu.haegu_no]?.vessel_count || 0,
+                            total_distance: gisData.haeguStats?.[haegu.haegu_no]?.total_distance || 0,
+                            tooltip: `<strong>Haegu ${haegu.haegu_no}</strong><br>` +
+                                `Vessels: ${gisData.haeguStats?.[haegu.haegu_no]?.vessel_count || 0}<br>` +
+                                `Distance: ${(gisData.haeguStats?.[haegu.haegu_no]?.total_distance || 0).toFixed(1)} nm`
+                        },
+                        geometry: JSON.parse(haegu.geom_json)
+                    }))
+                },
+                filled: true,
+                stroked: true,
+                getFillColor: d => getVesselCountColor(d.properties.vessel_count),
+                getLineColor: [0, 100, 200, 255],
+                getLineWidth: 2,
+                lineWidthMinPixels: 1,
+                pickable: true,
+                autoHighlight: true,
+                highlightColor: [255, 255, 0, 100],
+                onClick: (info) => {
+                    if (info.object) {
+                        showAreaDetails('haegu', info.object.properties);
+                    }
+                    return true;
+                }
+            }));
+        }
+
+        // Custom Area 레이어
+        if ((layerType === 'area' || layerType === 'both') && gisData.areas && gisData.areas.length > 0) {
+            layers.push(new deck.GeoJsonLayer({
+                id: 'area-layer',
+                data: {
+                    type: 'FeatureCollection',
+                    features: gisData.areas.map(area => ({
+                        type: 'Feature',
+                        properties: {
+                            area_id: area.area_id,
+                            area_name: area.area_name,
+                            vessel_count: gisData.areaStats?.[area.area_id]?.vessel_count || 0,
+                            total_distance: gisData.areaStats?.[area.area_id]?.total_distance || 0,
+                            tooltip: `<strong>${area.area_name || area.area_id}</strong><br>` +
+                                `Vessels: ${gisData.areaStats?.[area.area_id]?.vessel_count || 0}<br>` +
+                                `Distance: ${(gisData.areaStats?.[area.area_id]?.total_distance || 0).toFixed(1)} nm`
+                        },
+                        geometry: JSON.parse(area.geom_json)
+                    }))
+                },
+                filled: true,
+                stroked: true,
+                getFillColor: d => getVesselCountColor(d.properties.vessel_count),
+                getLineColor: [200, 100, 0, 255],
+                getLineWidth: 3,
+                lineWidthMinPixels: 2,
+                pickable: true,
+                autoHighlight: true,
+                highlightColor: [255, 255, 0, 100],
+                onClick: (info) => {
+                    if (info.object) {
+                        showAreaDetails('area', info.object.properties);
+                    }
+                    return true;
+                }
+            }));
+        }
+
+        // 선박 궤적 레이어
+        if ($('#showTracks').is(':checked') && gisData.tracks && gisData.tracks.length > 0) {
+            console.log(`Rendering ${gisData.tracks.length} vessel tracks`);
+
+            layers.push(new deck.PathLayer({
+                id: 'track-layer',
+                data: gisData.tracks.map(track => ({
+                    ...track,
+                    tooltip: `<strong>${track.vessel_id}</strong><br>` +
+                        `Avg Speed: ${track.avg_speed.toFixed(1)} kts<br>` +
+                        `Distance: ${track.distance.toFixed(1)} nm`
+                })),
+                getPath: d => d.path,
+                getColor: d => d.selected ? [0, 128, 255, 255] : [0, 255, 0, 255],
+                getWidth: d => d.selected ? 4 : 3,
+                pickable: true,
+                widthMinPixels: 2,
+                widthMaxPixels: 10,
+                capRounded: true,
+                jointRounded: true,
+                billboard: false
+            }));
+        }
+
+        // 전체 궤적 레이어
+        if ($('#showAllTracks').is(':checked') && gisData.filteredTracks && gisData.filteredTracks.length > 0) {
+            console.log(`Rendering ${gisData.filteredTracks.length} filtered tracks`);
+
+            layers.push(new deck.PathLayer({
+                id: 'all-tracks-layer',
+                data: gisData.filteredTracks.map(track => ({
+                    ...track,
+                    tooltip: `<strong>${track.vessel_id}</strong><br>` +
+                        `Avg Speed: ${track.avg_speed.toFixed(1)} kts<br>` +
+                        `Distance: ${track.distance.toFixed(1)} nm`
+                })),
+                getPath: d => d.path,
+                getColor: d => {
+                    if (d.avg_speed > 20) return [255, 0, 0, 200];
+                    if (d.avg_speed > 10) return [255, 165, 0, 200];
+                    return [0, 128, 255, 200];
+                },
+                getWidth: 2,
+                pickable: true,
+                widthMinPixels: 1,
+                widthMaxPixels: 5,
+                capRounded: true,
+                jointRounded: true,
+                billboard: false
+            }));
+        }
+
+        // 선박 최종 위치 레이어
+        if (gisData.vesselPositions && gisData.vesselPositions.length > 0) {
+            console.log(`Rendering ${gisData.vesselPositions.length} vessel positions`);
+
+            layers.push(new deck.ScatterplotLayer({
+                id: 'vessel-position-layer',
+                data: gisData.vesselPositions.map(pos => ({
+                    ...pos,
+                    tooltip: `<strong>Vessel: ${pos.sig_src_cd}_${pos.target_id}</strong><br>` +
+                        `Speed: ${pos.speed.toFixed(1)} kts<br>` +
+                        `Time: ${new Date(pos.time).toLocaleTimeString()}`
+                })),
+                getPosition: d => d.position,
+                getRadius: 4,
+                radiusMinPixels: 3,
+                radiusMaxPixels: 8,
+                getFillColor: [255, 0, 0, 255],
+                getLineColor: [255, 255, 255, 255],
+                lineWidthMinPixels: 1,
+                pickable: true,
+                onClick: (info) => {
+                    if (info.object) {
+                        const vesselId = `${info.object.sig_src_cd}_${info.object.target_id}`;
+                        toggleVesselSelection(vesselId);
+                    }
+                    return true;
+                }
+            }));
+        }
+
+        deckOverlay.setProps({ layers });
+    }
+
+    // 영역 상세 정보 표시
+    async function showAreaDetails(type, properties) {
+        const panel = $('#trackInfoPanel');
+        const title = $('#trackPanelTitle');
+        const content = $('#trackPanelContent');
+
+        // 현재 영역 정보 저장
+        gisData.currentArea = {
+            type: type,
+            id: type === 'haegu' ? properties.haegu_no : properties.area_id
+        };
+
+        if (type === 'haegu') {
+            title.text(`Haegu ${properties.haegu_no}`);
+            content.html(`
+                    <p><strong>Active Vessels:</strong> ${properties.vessel_count}</p>
+                    <p><strong>Total Distance:</strong> ${properties.total_distance.toFixed(2)} nm</p>
+                    <hr>
+                    <button class="btn btn-sm btn-primary" onclick="showVesselList('haegu', '${properties.haegu_no}')">
+                        <i class="bi bi-list"></i> Show Vessel List
+                    </button>
+                    <button class="btn btn-sm btn-success ms-2" onclick="showVesselPositions('haegu', '${properties.haegu_no}')">
+                        <i class="bi bi-geo-fill"></i> Show Positions
+                    </button>
+                    <br><br>
+                    <button class="btn btn-sm btn-warning w-100" onclick="showAreaAllTracks('haegu', '${properties.haegu_no}')">
+                        <i class="bi bi-map"></i> Show All Tracks in This Haegu
+                    </button>
+                    <br><br>
+                    <button class="btn btn-sm btn-secondary w-100" onclick="$('#trackInfoPanel').hide()">
+                        <i class="bi bi-x"></i> Close
+                    </button>
+                `);
+        } else {
+            title.text(properties.area_name || properties.area_id);
+            content.html(`
+                    <p><strong>Area ID:</strong> ${properties.area_id}</p>
+                    <p><strong>Active Vessels:</strong> ${properties.vessel_count}</p>
+                    <p><strong>Total Distance:</strong> ${properties.total_distance.toFixed(2)} nm</p>
+                    <hr>
+                    <button class="btn btn-sm btn-primary" onclick="showVesselList('area', '${properties.area_id}')">
+                        <i class="bi bi-list"></i> Show Vessel List
+                    </button>
+                    <button class="btn btn-sm btn-success ms-2" onclick="showVesselPositions('area', '${properties.area_id}')">
+                        <i class="bi bi-geo-fill"></i> Show Positions
+                    </button>
+                    <br><br>
+                    <button class="btn btn-sm btn-warning w-100" onclick="showAreaAllTracks('area', '${properties.area_id}')">
+                        <i class="bi bi-map"></i> Show All Tracks in This Area
+                    </button>
+                    <br><br>
+                    <button class="btn btn-sm btn-secondary w-100" onclick="$('#trackInfoPanel').hide()">
+                        <i class="bi bi-x"></i> Close
+                    </button>
+                `);
+        }
+
+        panel.show();
+    }
+
+    // 선박 목록 표시
+    async function showVesselList(type, id) {
+        // 현재 영역 정보 저장
+        gisData.currentArea = { type: type, id: id };
+
+        const timeRange = $('#gisTimeRange').val();
+        const section = $('#vesselListSection');
+        const content = $('#vesselListContent');
+
+        $('#vesselListTitle').text(`Vessels in ${type === 'haegu' ? 'Haegu ' + id : 'Area'} (${timeRange} min)`);
+        content.html('<div class="text-center"><i class="bi bi-hourglass-split"></i> Loading...</div>');
+        section.slideDown();
+
+        try {
+            let tracks = [];
+
+            if (type === 'haegu') {
+                tracks = await $.get(`/api/v1/tracks/haegu/${id}?minutes=${timeRange}`);
+            } else {
+                tracks = await $.get(`/api/v1/tracks/area/${id}?minutes=${timeRange}`);
+            }
+
+            console.log(`Loaded ${tracks.length} tracks for ${type} ${id}`);
+
+            const vessels = tracks.map(t => ({
+                id: `${t.sig_src_cd}_${t.target_id}`,
+                sig_src_cd: t.sig_src_cd,
+                target_id: t.target_id,
+                distance: parseFloat(t.distance_nm) || 0,
+                avg_speed: parseFloat(t.avg_speed) || 0,
+                type: type,
+                area_id: id,
+                track_geom: t.track_geom,
+                time_bucket: t.time_bucket
+            }));
+
+            // 중복 제거
+            const uniqueVessels = {};
+            vessels.forEach(v => {
+                if (!uniqueVessels[v.id] || uniqueVessels[v.id].distance < v.distance) {
+                    uniqueVessels[v.id] = v;
+                }
+            });
+
+            gisData.currentVesselList = Object.values(uniqueVessels);
+
+            // 필터 적용
+            applyVesselListFilters();
+
+            // 정렬
+            sortVesselList();
+
+            // 렌더링
+            renderVesselList();
+
+        } catch (error) {
+            console.error('Failed to load vessel list:', error);
+            content.html('<div class="text-danger">Failed to load vessel list</div>');
+        }
+    }
+
+    // 선박 리스트 필터링
+    function applyVesselListFilters() {
+        const minSpeed = parseFloat($('#minSpeedFilter').val()) || 0;
+        const maxSpeed = parseFloat($('#maxSpeedFilter').val()) || 50;
+        const minDist = parseFloat($('#minDistFilter').val()) || 0;
+        const maxDist = parseFloat($('#maxDistFilter').val()) || 200;
+
+        const originalList = [...gisData.currentVesselList];
+
+        gisData.currentVesselList = originalList.filter(v =>
+            v.avg_speed >= minSpeed &&
+            v.avg_speed <= maxSpeed &&
+            v.distance >= minDist &&
+            v.distance <= maxDist
+        );
+
+        console.log(`Filtered from ${originalList.length} to ${gisData.currentVesselList.length} vessels`);
+    }
+
+    // 선박 리스트 정렬
+    function sortVesselList() {
+        const sortBy = $('#sortBy').val();
+        const sortOrder = $('#sortOrder').val();
+
+        gisData.currentVesselList.sort((a, b) => {
+            let compareValue = 0;
+
+            switch(sortBy) {
+                case 'id':
+                    compareValue = a.id.localeCompare(b.id);
+                    break;
+                case 'speed':
+                    compareValue = a.avg_speed - b.avg_speed;
+                    break;
+                case 'distance':
+                    compareValue = a.distance - b.distance;
+                    break;
+            }
+
+            return sortOrder === 'asc' ? compareValue : -compareValue;
+        });
+    }
+
+    // 선박 리스트 렌더링
+    function renderVesselList() {
+        const content = $('#vesselListContent');
+
+        if (gisData.currentVesselList.length === 0) {
+            content.html('<div class="text-muted">No vessels found in this area</div>');
+        } else {
+            let html = `<div class="mb-2">Found ${gisData.currentVesselList.length} vessels</div>`;
+
+            gisData.currentVesselList.forEach(v => {
+                const isSelected = gisData.selectedVessels.has(v.id);
+                html += `
+                        <div class="vessel-item ${isSelected ? 'selected' : ''}" data-vessel-id="${v.id}">
+                            <input type="checkbox" class="vessel-checkbox"
+                                   data-vessel-id="${v.id}"
+                                   ${isSelected ? 'checked' : ''}>
+                            <div class="vessel-info">
+                                <strong>${v.id}</strong><br>
+                                <small>
+                                    Distance: ${v.distance.toFixed(2)} nm |
+                                    Avg Speed: ${v.avg_speed.toFixed(1)} kts
+                                </small>
+                            </div>
+                        </div>
+                    `;
+            });
+
+            content.html(html);
+
+            // 체크박스 이벤트 핸들러
+            $('.vessel-checkbox').off('change').on('change', function(e) {
+                e.stopPropagation();
+                const vesselId = $(this).data('vessel-id');
+                toggleVesselSelection(vesselId);
+            });
+
+            // 행 클릭 이벤트
+            $('.vessel-item').off('click').on('click', function(e) {
+                if (!$(e.target).is('.vessel-checkbox')) {
+                    const checkbox = $(this).find('.vessel-checkbox');
+                    checkbox.prop('checked', !checkbox.prop('checked'));
+                    const vesselId = $(this).data('vessel-id');
+                    toggleVesselSelection(vesselId);
+                }
+            });
+        }
+
+        updateSelectedCount();
+    }
+
+    // 선박 선택 토글
+    function toggleVesselSelection(vesselId) {
+        if (gisData.selectedVessels.has(vesselId)) {
+            gisData.selectedVessels.delete(vesselId);
+        } else {
+            gisData.selectedVessels.add(vesselId);
+        }
+
+        // UI 업데이트
+        const vesselItem = $(`.vessel-item[data-vessel-id="${vesselId}"]`);
+        const checkbox = vesselItem.find('.vessel-checkbox');
+
+        if (gisData.selectedVessels.has(vesselId)) {
+            vesselItem.addClass('selected');
+            checkbox.prop('checked', true);
+        } else {
+            vesselItem.removeClass('selected');
+            checkbox.prop('checked', false);
+        }
+
+        updateSelectedCount();
+    }
+
+    // 선택된 선박 수 업데이트
+    function updateSelectedCount() {
+        const count = gisData.selectedVessels.size;
+        const countElement = $('#selectedCount');
+
+        if (count > 0) {
+            countElement.text(count).show();
+        } else {
+            countElement.hide();
+        }
+    }
+
+    // 모든 선박 선택
+    function selectAllVessels() {
+        gisData.currentVesselList.forEach(v => {
+            gisData.selectedVessels.add(v.id);
+        });
+        renderVesselList();
+    }
+
+    // 모든 선박 선택 해제
+    function deselectAllVessels() {
+        gisData.selectedVessels.clear();
+        renderVesselList();
+    }
+
+    // 선택된 선박 궤적 표시
+    async function showSelectedTracks() {
+        if (gisData.selectedVessels.size === 0) {
+            alert('Please select at least one vessel');
+            return;
+        }
+
+        const period = $('#trackPeriod').val();
+        gisData.tracks = [];
+
+        // 선택된 선박들의 궤적 로드
+        for (const vessel of gisData.currentVesselList) {
+            if (gisData.selectedVessels.has(vessel.id)) {
+                try {
+                    let tracks;
+                    if (vessel.type === 'haegu') {
+                        tracks = await $.get(`/api/v1/tracks/haegu/${vessel.area_id}?minutes=${period}`);
+                    } else {
+                        tracks = await $.get(`/api/v1/tracks/area/${vessel.area_id}?minutes=${period}`);
+                    }
+
+                    const vesselTracks = tracks.filter(t =>
+                        `${t.sig_src_cd}_${t.target_id}` === vessel.id
+                    );
+
+                    // 모든 포인트를 하나의 path로 병합
+                    const allPoints = [];
+                    vesselTracks.forEach(track => {
+                        const points = parseLineStringM(track.track_geom);
+                        points.forEach(point => allPoints.push(point));
+                    });
+
+                    if (allPoints.length > 0) {
+                        gisData.tracks.push({
+                            path: allPoints,
+                            vessel_id: vessel.id,
+                            distance: vesselTracks.reduce((sum, t) => sum + (parseFloat(t.distance_nm) || 0), 0),
+                            avg_speed: vesselTracks.reduce((sum, t) => sum + (parseFloat(t.avg_speed) || 0), 0) / vesselTracks.length,
+                            selected: true
+                        });
+                    }
+                } catch (error) {
+                    console.error(`Failed to load track for vessel ${vessel.id}:`, error);
+                }
+            }
+        }
+
+        $('#showTracks').prop('checked', true);
+        updateGisLayers();
+
+        // 맵 범위 조정
+        if (gisData.tracks.length > 0) {
+            const bounds = new maplibregl.LngLatBounds();
+            gisData.tracks.forEach(track => {
+                track.path.forEach(coord => bounds.extend(coord));
+            });
+
+            map.fitBounds(bounds, {
+                padding: 50,
+                duration: 1000
+            });
+        }
+
+        $('#vesselListSection').slideUp();
+
+        // 정보 패널 업데이트
+        $('#trackPanelTitle').text(`Selected Vessels (${gisData.selectedVessels.size})`);
+        $('#trackPanelContent').html(`
+                <p><strong>Period:</strong> Last ${period} minutes</p>
+                <p><strong>Selected Vessels:</strong> ${gisData.selectedVessels.size}</p>
+                <p><strong>Total Tracks:</strong> ${gisData.tracks.length}</p>
+                <hr>
+                <button class="btn btn-sm btn-primary" onclick="backToVesselList()">
+                    <i class="bi bi-arrow-left"></i> Back to List
+                </button>
+                <button class="btn btn-sm btn-secondary ms-2" onclick="clearVesselTracks()">
+                    <i class="bi bi-x-circle"></i> Clear Tracks
+                </button>
+                <hr>
+                <button class="btn btn-sm btn-secondary w-100" onclick="$('#trackInfoPanel').hide()">
+                    <i class="bi bi-x"></i> Close
+                </button>
+            `);
+        $('#trackInfoPanel').show();
+    }
+
+    // 선박 궤적 클리어
+    function clearVesselTracks() {
+        gisData.tracks = [];
+        gisData.vesselPositions = [];
+        gisData.selectedVessels.clear();
+        updateSelectedCount();
+        updateGisLayers();
+    }
+
+    // 선박 현재 위치 표시
+    async function showVesselPositions(type, id) {
+        const timeRange = $('#gisTimeRange').val();
+
+        try {
+            gisData.vesselPositions = [];
+
+            let tracks = [];
+            if (type === 'haegu') {
+                tracks = await $.get(`/api/v1/tracks/haegu/${id}?minutes=${timeRange}`);
+            } else {
+                tracks = await $.get(`/api/v1/tracks/area/${id}?minutes=${timeRange}`);
+            }
+
+            const latestPositions = {};
+
+            tracks.forEach(track => {
+                const vesselId = `${track.sig_src_cd}_${track.target_id}`;
+                const path = parseLineStringM(track.track_geom);
+
+                if (path.length > 0) {
+                    if (!latestPositions[vesselId] ||
+                        new Date(track.time_bucket) > new Date(latestPositions[vesselId].time)) {
+                        latestPositions[vesselId] = {
+                            position: path[path.length - 1],
+                            sig_src_cd: track.sig_src_cd,
+                            target_id: track.target_id,
+                            time: track.time_bucket,
+                            speed: parseFloat(track.avg_speed) || 0,
+                            type: type,
+                            area_id: id
+                        };
+                    }
+                }
+            });
+
+            gisData.vesselPositions = Object.values(latestPositions);
+            console.log(`Showing ${gisData.vesselPositions.length} vessel positions for ${type} ${id}`);
+
+            updateGisLayers();
+
+            if (gisData.vesselPositions.length > 0) {
+                const bounds = new maplibregl.LngLatBounds();
+                gisData.vesselPositions.forEach(vp => {
+                    bounds.extend(vp.position);
+                });
+
+                map.fitBounds(bounds, {
+                    padding: 100,
+                    duration: 1000
+                });
+            }
+
+        } catch (error) {
+            console.error('Failed to load vessel positions:', error);
+            alert('Failed to load vessel positions');
+        }
+    }
+
+    // LineStringM 파싱
+    function parseLineStringM(wkt) {
+        if (!wkt) {
+            console.warn('Empty WKT string');
+            return [];
+        }
+
+        const matches = wkt.match(/LINESTRING M\s*\((.*)\)/);
+        if (!matches) {
+            console.warn('Invalid WKT format:', wkt);
+            return [];
+        }
+
+        try {
+            const coords = matches[1].split(',').map(coord => {
+                const parts = coord.trim().split(/\s+/);
+                const lon = parseFloat(parts[0]);
+                const lat = parseFloat(parts[1]);
+
+                if (isNaN(lon) || isNaN(lat)) {
+                    console.warn('Invalid coordinates:', coord);
+                    return null;
+                }
+
+                return [lon, lat];
+            }).filter(coord => coord !== null);
+
+            return coords;
+        } catch (error) {
+            console.error('Error parsing LineStringM:', error, wkt);
+            return [];
+        }
+    }
+
+    // 전체 궤적 로드
+    async function loadAllTracks() {
+        const timeRange = $('#trackPeriod').val();
+        const layerType = $('#gisLayerType').val();
+
+        console.log('Loading all tracks...');
+        gisData.allTracks = [];
+
+        try {
+            if (layerType === 'haegu' || layerType === 'both') {
+                for (const [haeguNo, stats] of Object.entries(gisData.haeguStats)) {
+                    if (stats.vessel_count > 0) {
+                        const tracks = await $.get(`/api/v1/tracks/haegu/${haeguNo}?minutes=${timeRange}`);
+                        tracks.forEach(track => {
+                            const path = parseLineStringM(track.track_geom);
+                            if (path.length > 0) {
+                                gisData.allTracks.push({
+                                    path: path,
+                                    vessel_id: `${track.sig_src_cd}_${track.target_id}`,
+                                    distance: parseFloat(track.distance_nm) || 0,
+                                    avg_speed: parseFloat(track.avg_speed) || 0,
+                                    time_bucket: track.time_bucket,
+                                    type: 'haegu',
+                                    area_id: haeguNo
+                                });
+                            }
+                        });
+                    }
+                }
+            }
+
+            if (layerType === 'area' || layerType === 'both') {
+                for (const [areaId, stats] of Object.entries(gisData.areaStats)) {
+                    if (stats.vessel_count > 0) {
+                        const tracks = await $.get(`/api/v1/tracks/area/${areaId}?minutes=${timeRange}`);
+                        tracks.forEach(track => {
+                            const path = parseLineStringM(track.track_geom);
+                            if (path.length > 0) {
+                                gisData.allTracks.push({
+                                    path: path,
+                                    vessel_id: `${track.sig_src_cd}_${track.target_id}`,
+                                    distance: parseFloat(track.distance_nm) || 0,
+                                    avg_speed: parseFloat(track.avg_speed) || 0,
+                                    time_bucket: track.time_bucket,
+                                    type: 'area',
+                                    area_id: areaId
+                                });
+                            }
+                        });
+                    }
+                }
+            }
+
+            console.log(`Loaded ${gisData.allTracks.length} total tracks`);
+            gisData.filteredTracks = [...gisData.allTracks];
+            updateGisLayers();
+
+        } catch (error) {
+            console.error('Failed to load all tracks:', error);
+            alert('Failed to load all tracks');
+        }
+    }
+
+    // 트랙 필터 적용
+    function applyTrackFilters() {
+        const minSpeed = parseFloat($('#minSpeedFilter').val()) || 0;
+        const maxSpeed = parseFloat($('#maxSpeedFilter').val()) || 50;
+        const minDist = parseFloat($('#minDistFilter').val()) || 0;
+        const maxDist = parseFloat($('#maxDistFilter').val()) || 200;
+
+        // tracks 필터링 (현재 표시 중인 궤적)
+        if (gisData.tracks.length > 0) {
+            const filteredTracks = gisData.tracks.filter(track => {
+                return track.avg_speed >= minSpeed &&
+                    track.avg_speed <= maxSpeed &&
+                    track.distance >= minDist &&
+                    track.distance <= maxDist;
+            });
+            gisData.tracks = filteredTracks;
+        }
+
+        // allTracks 필터링 (전체 궤적 모드)
+        if (gisData.allTracks.length > 0) {
+            gisData.filteredTracks = gisData.allTracks.filter(track => {
+                return track.avg_speed >= minSpeed &&
+                    track.avg_speed <= maxSpeed &&
+                    track.distance >= minDist &&
+                    track.distance <= maxDist;
+            });
+        }
+
+        console.log(`Filtered tracks - Current: ${gisData.tracks.length}, All: ${gisData.filteredTracks.length}`);
+        updateGisLayers();
+
+        // vessel list에도 필터 적용
+        if (gisData.currentVesselList.length > 0) {
+            applyVesselListFilters();
+            renderVesselList();
+        }
+    }
+
+    // 필터 리셋
+    function resetFilters() {
+        $('#minSpeedFilter').val(0);
+        $('#maxSpeedFilter').val(50);
+        $('#minDistFilter').val(0);
+        $('#maxDistFilter').val(200);
+
+        gisData.filteredTracks = [...gisData.allTracks];
+        updateGisLayers();
+
+        if (gisData.currentVesselList.length > 0) {
+            showVesselList(
+                gisData.currentVesselList[0].type,
+                gisData.currentVesselList[0].area_id
+            );
+        }
+    }
+
+    // 특정 영역의 모든 선박 궤적 표시
+    async function showAreaAllTracks(type, id) {
+        const period = $('#trackPeriod').val();
+        gisData.tracks = [];
+
+        // 현재 영역 정보 저장
+        gisData.currentArea = { type: type, id: id };
+
+        try {
+            let tracks;
+            if (type === 'haegu') {
+                tracks = await $.get(`/api/v1/tracks/haegu/${id}?minutes=${period}`);
+            } else {
+                tracks = await $.get(`/api/v1/tracks/area/${id}?minutes=${period}`);
+            }
+
+            console.log(`Loading all tracks for ${type} ${id}: ${tracks.length} tracks found`);
+
+            // 각 선박별로 궤적을 그룹화하고 병합
+            const vesselTracks = {};
+            tracks.forEach(track => {
+                const vesselId = `${track.sig_src_cd}_${track.target_id}`;
+                if (!vesselTracks[vesselId]) {
+                    vesselTracks[vesselId] = {
+                        vessel_id: vesselId,
+                        tracks: [],
+                        total_distance: 0,
+                        avg_speeds: []
+                    };
+                }
+                vesselTracks[vesselId].tracks.push(track);
+                vesselTracks[vesselId].total_distance += parseFloat(track.distance_nm) || 0;
+                vesselTracks[vesselId].avg_speeds.push(parseFloat(track.avg_speed) || 0);
+            });
+
+            // 각 선박의 모든 포인트를 하나의 궤적으로 병합
+            Object.values(vesselTracks).forEach(vessel => {
+                const allPoints = [];
+
+                // 시간순으로 정렬
+                vessel.tracks.sort((a, b) => new Date(a.time_bucket) - new Date(b.time_bucket));
+
+                vessel.tracks.forEach(track => {
+                    const points = parseLineStringM(track.track_geom);
+                    points.forEach(point => allPoints.push(point));
+                });
+
+                if (allPoints.length > 0) {
+                    const avgSpeed = vessel.avg_speeds.reduce((a, b) => a + b, 0) / vessel.avg_speeds.length;
+
+                    gisData.tracks.push({
+                        path: allPoints,
+                        vessel_id: vessel.vessel_id,
+                        distance: vessel.total_distance,
+                        avg_speed: avgSpeed,
+                        selected: false
+                    });
+                }
+            });
+
+            console.log(`Created ${gisData.tracks.length} vessel tracks`);
+
+            $('#showTracks').prop('checked', true);
+            updateGisLayers();
+
+            // 맵 범위 조정
+            if (gisData.tracks.length > 0) {
+                const bounds = new maplibregl.LngLatBounds();
+                gisData.tracks.forEach(track => {
+                    track.path.forEach(coord => bounds.extend(coord));
+                });
+
+                map.fitBounds(bounds, {
+                    padding: 50,
+                    duration: 1000
+                });
+            }
+
+            // 정보 패널 업데이트
+            $('#trackPanelTitle').text(`All Tracks in ${type === 'haegu' ? 'Haegu ' + id : 'Area ' + id}`);
+            $('#trackPanelContent').html(`
+                    <p><strong>Period:</strong> Last ${period} minutes</p>
+                    <p><strong>Total Vessels:</strong> ${gisData.tracks.length}</p>
+                    <p><strong>Total Track Points:</strong> ${gisData.tracks.reduce((sum, t) => sum + t.path.length, 0)}</p>
+                    <hr>
+                    <button class="btn btn-sm btn-primary" onclick="backToAreaInfo()">
+                        <i class="bi bi-arrow-left"></i> Back to Area Info
+                    </button>
+                    <button class="btn btn-sm btn-info ms-2" onclick="applyTrackFilters()">
+                        <i class="bi bi-funnel"></i> Apply Filters
+                    </button>
+                    <hr>
+                    <button class="btn btn-sm btn-secondary" onclick="clearVesselTracks()">
+                        <i class="bi bi-x-circle"></i> Clear Tracks
+                    </button>
+                    <button class="btn btn-sm btn-secondary ms-2" onclick="$('#trackInfoPanel').hide()">
+                        <i class="bi bi-x"></i> Close
+                    </button>
+                `);
+
+        } catch (error) {
+            console.error('Failed to load area tracks:', error);
+            alert('Failed to load tracks for this area');
+        }
+    }
+
+    // 선박 목록으로 돌아가기
+    function backToVesselList() {
+        if (gisData.currentArea) {
+            showVesselList(gisData.currentArea.type, gisData.currentArea.id);
+        }
+    }
+
+    // 영역 정보로 돌아가기
+    function backToAreaInfo() {
+        if (gisData.currentArea) {
+            const properties = {
+                haegu_no: gisData.currentArea.id,
+                area_id: gisData.currentArea.id,
+                vessel_count: gisData.currentArea.type === 'haegu' ?
+                    (gisData.haeguStats[gisData.currentArea.id]?.vessel_count || 0) :
+                    (gisData.areaStats[gisData.currentArea.id]?.vessel_count || 0),
+                total_distance: gisData.currentArea.type === 'haegu' ?
+                    (gisData.haeguStats[gisData.currentArea.id]?.total_distance || 0) :
+                    (gisData.areaStats[gisData.currentArea.id]?.total_distance || 0)
+            };
+
+            // 영역 이름 추가
+            if (gisData.currentArea.type === 'area') {
+                const area = gisData.areas.find(a => a.area_id === gisData.currentArea.id);
+                if (area) {
+                    properties.area_name = area.area_name;
+                }
+            }
+
+            showAreaDetails(gisData.currentArea.type, properties);
+        }
+    }
+
+    // GIS 데이터 새로고침
+    function refreshGisData() {
+        loadGisData();
+    }
+</script>
+</body>
+</html>

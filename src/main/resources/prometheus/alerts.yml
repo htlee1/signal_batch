@@ -1,0 +1,55 @@
+groups:
+  - name: vessel_batch_alerts
+    interval: 30s
+    rules:
+      # Job 실패 알림
+      - alert: JobFailed
+        expr: increase(batch_job_completed_total{status="FAILED"}[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Batch job failed"
+          description: "Job {{ $labels.job_name }} failed"
+
+      # 처리 속도 저하
+      - alert: LowThroughput
+        expr: rate(batch_job_records_read_total[5m]) < 1000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low processing throughput"
+          description: "Processing rate is below 1000 records/sec"
+
+      # 높은 에러율
+      - alert: HighErrorRate
+        expr: |
+          rate(batch_job_records_skip_total[5m]) / 
+          rate(batch_job_records_read_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate"
+          description: "Error rate is above 5%"
+
+      # 메모리 부족
+      - alert: HighMemoryUsage
+        expr: batch_memory_usage_ratio > 0.9
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is above 90%"
+
+      # Job 행
+      - alert: JobStuck
+        expr: batch_job_active > 0 and up{job="vessel-batch"} == 1
+        for: 2h
+        labels:
+          severity: critical
+        annotations:
+          summary: "Job appears to be stuck"
+          description: "Job has been running for over 2 hours"

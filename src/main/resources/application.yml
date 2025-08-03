@@ -1,0 +1,203 @@
+spring:
+  application:
+    name: vessel-batch-aggregation
+
+  main:
+    allow-bean-definition-overriding: true  # Bean 중복 정의 허용
+
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:dev}  # 환경변수로 프로필 설정, 기본값은 dev
+
+  # Jackson 설정
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+    deserialization:
+      fail-on-unknown-properties: false
+    time-zone: Asia/Seoul
+    date-format: yyyy-MM-dd'T'HH:mm:ss
+
+  batch:
+    job:
+      enabled: false  # 자동 실행 방지
+    jdbc:
+      initialize-schema: always
+      table-prefix: BATCH_  # 배치 테이블 prefix
+
+  # 공통 데이터소스 설정
+  datasource:
+    # 수집 DB
+    collect:
+      url: ${COLLECT_DB_URL:jdbc:postgresql://localhost:5432/wingdb?stringtype=unspecified&currentSchema=signal&TimeZone=Asia/Seoul}
+      username: ${COLLECT_DB_USER:collect_user}
+      password: ${COLLECT_DB_PASS:collect_pass}
+      driver-class-name: org.postgresql.Driver
+      hikari:
+        pool-name: CollectHikariPool
+        connection-timeout: 30000
+        idle-timeout: 600000
+        max-lifetime: 1800000
+        maximum-pool-size: 20
+        minimum-idle: 5
+
+    # 조회 DB
+    query:
+      url: ${QUERY_DB_URL:jdbc:postgresql://localhost:5432/wingdb?stringtype=unspecified&currentSchema=signal&TimeZone=Asia/Seoul}
+      username: ${QUERY_DB_USER:query_user}
+      password: ${QUERY_DB_PASS:query_pass}
+      driver-class-name: org.postgresql.Driver
+      hikari:
+        pool-name: QueryHikariPool
+        connection-timeout: 30000
+        idle-timeout: 600000
+        max-lifetime: 1800000
+        maximum-pool-size: 30
+        minimum-idle: 10
+
+    # 배치 메타데이터 DB
+    batch:
+      url: ${BATCH_DB_URL:jdbc:postgresql://localhost:5432/wingdb?stringtype=unspecified&currentSchema=signal&TimeZone=Asia/Seoul}
+      username: ${BATCH_DB_USER:batch_user}
+      password: ${BATCH_DB_PASS:batch_pass}
+      driver-class-name: org.postgresql.Driver
+      hikari:
+        pool-name: BatchHikariPool
+        maximum-pool-size: 10
+        minimum-idle: 2
+
+# 로깅 설정
+logging:
+  level:
+    root: INFO
+    gc.mda.signal_batch: INFO
+    gc.mda.signal_batch.util: WARN
+    com.vessel.batch: INFO
+    org.springframework.batch: INFO
+    org.springframework.jdbc: WARN
+    org.postgresql: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+  file:
+    name: ${LOG_PATH:logs}/vessel-batch.log
+    max-size: 100MB
+    max-history: 30
+
+# 액추에이터 설정
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,env,loggers,threaddump,heapdump
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: always
+      show-components: always
+      probes:
+        enabled: true
+    metrics:
+      enabled: true
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+        step: 30s
+    tags:
+      application: ${spring.application.name}
+      environment: ${spring.profiles.active}
+    distribution:
+      percentiles-histogram:
+        batch.job.duration: true
+        batch.step.duration: true
+        batch.chunk.duration: true
+        batch.database.operation: true
+      percentiles:
+        batch.job.duration: 0.5, 0.75, 0.95, 0.99
+        batch.step.duration: 0.5, 0.75, 0.95, 0.99
+  prometheus:
+    metrics:
+      export:
+        enabled: true
+
+# 커스텀 설정
+vessel:
+  batch:
+    chunk-size: ${BATCH_CHUNK_SIZE:10000}
+    page-size: ${BATCH_PAGE_SIZE:10000}
+    partition-size: ${BATCH_PARTITION_SIZE:24}
+    skip-limit: 100
+    retry-limit: 3
+    # Reader 설정
+    use-cursor-reader: true  # Cursor Reader 사용 여부
+    fetch-size: 50000       # 한번에 가져올 row 수
+
+
+    # 타임아웃 설정
+    query-timeout: 1800     # 30분
+
+    partition:
+      retention-days: 30
+      future-days: 7
+    enable-partition-auto-management: true
+
+    # Bulk Insert 설정
+    bulk-insert:
+      batch-size: 10000          # 한번에 처리할 레코드 수 (5분 배치에 최적화)
+      parallel-threads: 4        # 병렬 처리 스레드 수
+      use-binary-copy: false     # 바이너리 COPY 사용 여부
+
+    # 데이터베이스 연결 설정
+    datasource:
+      query:
+        hikari:
+          # Bulk Insert에 맞춘 설정
+          connection-init-sql: |
+            SET work_mem = '512MB';
+            SET maintenance_work_mem = '1GB';
+            SET synchronous_commit = 'off';
+            SET checkpoint_completion_target = 0.9;
+    # 락 설정
+    lock:
+      timeout: 10              # Advisory Lock 타임아웃 (초)
+      max-retry: 3            # 최대 재시도 횟수
+
+    # Writer 설정
+    writer:
+      use-advisory-lock: false  # Advisory Lock 사용 여부 (개별 처리 → 배치 처리)
+      parallel-threads: 4       # 병렬 처리 스레드 수
+
+    # 재시도 설정
+    retry:
+      max-attempts: 3
+      initial-interval: 100
+      max-interval: 5000
+      multiplier: 2
+
+    # 커스텀 Health Indicator 설정
+    health:
+      job-timeout-hours: 6      # Job 타임아웃 시간
+      min-partition-count: 5    # 최소 파티션 수
+
+    grid:
+      mode: haegu
+      haegu:
+        cache-enabled: true
+        cache-size: 2000
+
+# Swagger/OpenAPI 설정
+springdoc:
+  api-docs:
+    enabled: true
+    path: /v3/api-docs
+  swagger-ui:
+    enabled: true
+    path: /swagger-ui.html
+    display-request-duration: true
+    disable-swagger-default-url: true
+    doc-expansion: none
+    operations-sorter: alpha
+    tags-sorter: alpha
+  show-actuator: true
+  default-produces-media-type: application/json
+  default-consumes-media-type: application/json
