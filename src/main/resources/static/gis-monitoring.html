@@ -434,16 +434,43 @@
 
         deckOverlay = new deck.MapboxOverlay({
             layers: [],
-            getTooltip: ({object}) => object && {
-                html: object.tooltip || null,
-                style: {
-                    backgroundColor: 'rgba(255, 255, 255, 0.95)',
-                    color: '#000',
-                    fontSize: '12px',
-                    padding: '10px',
-                    borderRadius: '4px',
-                    boxShadow: '0 2px 4px rgba(0,0,0,0.3)'
+            getTooltip: ({object, layer}) => {
+                if (!object) return null;
+                
+                let html = null;
+                
+                // 레이어별로 다른 툴팁 표시
+                if (layer.id === 'haegu-layer') {
+                    html = `<strong>Haegu ${object.properties.haegu_no}</strong><br>` +
+                        `Vessels: ${object.properties.vessel_count}<br>` +
+                        `Distance: ${object.properties.total_distance.toFixed(1)} nm`;
+                } else if (layer.id === 'area-layer') {
+                    html = `<strong>${object.properties.area_name || object.properties.area_id}</strong><br>` +
+                        `Vessels: ${object.properties.vessel_count}<br>` +
+                        `Distance: ${object.properties.total_distance.toFixed(1)} nm`;
+                } else if (layer.id === 'track-layer' || layer.id === 'all-tracks-layer') {
+                    // 트랙 레이어의 경우 object에 직접 저장된 속성 사용
+                    html = `<strong>Vessel: ${object.vessel_id}</strong><br>` +
+                        `Avg Speed: ${object.avg_speed.toFixed(1)} kts<br>` +
+                        `Distance: ${object.distance.toFixed(1)} nm`;
+                } else if (layer.id === 'vessel-position-layer') {
+                    // 선박 위치 레이어
+                    html = `<strong>Vessel: ${object.sig_src_cd}_${object.target_id}</strong><br>` +
+                        `Speed: ${object.speed.toFixed(1)} kts<br>` +
+                        `Time: ${new Date(object.time).toLocaleTimeString()}`;
                 }
+                
+                return html ? {
+                    html: html,
+                    style: {
+                        backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                        color: '#000',
+                        fontSize: '12px',
+                        padding: '10px',
+                        borderRadius: '4px',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.3)'
+                    }
+                } : null;
             }
         });
         map.addControl(deckOverlay);
@@ -514,10 +541,7 @@
                         properties: {
                             haegu_no: haegu.haegu_no,
                             vessel_count: gisData.haeguStats?.[haegu.haegu_no]?.vessel_count || 0,
-                            total_distance: gisData.haeguStats?.[haegu.haegu_no]?.total_distance || 0,
-                            tooltip: `<strong>Haegu ${haegu.haegu_no}</strong><br>` +
-                                `Vessels: ${gisData.haeguStats?.[haegu.haegu_no]?.vessel_count || 0}<br>` +
-                                `Distance: ${(gisData.haeguStats?.[haegu.haegu_no]?.total_distance || 0).toFixed(1)} nm`
+                            total_distance: gisData.haeguStats?.[haegu.haegu_no]?.total_distance || 0
                         },
                         geometry: JSON.parse(haegu.geom_json)
                     }))
@@ -552,10 +576,7 @@
                             area_id: area.area_id,
                             area_name: area.area_name,
                             vessel_count: gisData.areaStats?.[area.area_id]?.vessel_count || 0,
-                            total_distance: gisData.areaStats?.[area.area_id]?.total_distance || 0,
-                            tooltip: `<strong>${area.area_name || area.area_id}</strong><br>` +
-                                `Vessels: ${gisData.areaStats?.[area.area_id]?.vessel_count || 0}<br>` +
-                                `Distance: ${(gisData.areaStats?.[area.area_id]?.total_distance || 0).toFixed(1)} nm`
+                            total_distance: gisData.areaStats?.[area.area_id]?.total_distance || 0
                         },
                         geometry: JSON.parse(area.geom_json)
                     }))
@@ -584,12 +605,7 @@
 
             layers.push(new deck.PathLayer({
                 id: 'track-layer',
-                data: gisData.tracks.map(track => ({
-                    ...track,
-                    tooltip: `<strong>${track.vessel_id}</strong><br>` +
-                        `Avg Speed: ${track.avg_speed.toFixed(1)} kts<br>` +
-                        `Distance: ${track.distance.toFixed(1)} nm`
-                })),
+                data: gisData.tracks,
                 getPath: d => d.path,
                 getColor: d => d.selected ? [0, 128, 255, 255] : [0, 255, 0, 255],
                 getWidth: d => d.selected ? 4 : 3,
@@ -608,12 +624,7 @@
 
             layers.push(new deck.PathLayer({
                 id: 'all-tracks-layer',
-                data: gisData.filteredTracks.map(track => ({
-                    ...track,
-                    tooltip: `<strong>${track.vessel_id}</strong><br>` +
-                        `Avg Speed: ${track.avg_speed.toFixed(1)} kts<br>` +
-                        `Distance: ${track.distance.toFixed(1)} nm`
-                })),
+                data: gisData.filteredTracks,
                 getPath: d => d.path,
                 getColor: d => {
                     if (d.avg_speed > 20) return [255, 0, 0, 200];
@@ -636,12 +647,7 @@
 
             layers.push(new deck.ScatterplotLayer({
                 id: 'vessel-position-layer',
-                data: gisData.vesselPositions.map(pos => ({
-                    ...pos,
-                    tooltip: `<strong>Vessel: ${pos.sig_src_cd}_${pos.target_id}</strong><br>` +
-                        `Speed: ${pos.speed.toFixed(1)} kts<br>` +
-                        `Time: ${new Date(pos.time).toLocaleTimeString()}`
-                })),
+                data: gisData.vesselPositions,
                 getPosition: d => d.position,
                 getRadius: 4,
                 radiusMinPixels: 3,

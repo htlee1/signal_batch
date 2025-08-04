@@ -40,8 +40,8 @@ public class WebSocketStompConfig implements WebSocketMessageBrokerConfigurer {
     @Bean
     public ServletServerContainerFactoryBean createWebSocketContainer() {
         ServletServerContainerFactoryBean container = new ServletServerContainerFactoryBean();
-        container.setMaxTextMessageBufferSize(128 * 1024 * 1024); // 128MB
-        container.setMaxBinaryMessageBufferSize(128 * 1024 * 1024); // 128MB
+        container.setMaxTextMessageBufferSize(256 * 1024 * 1024); // 256MB로 증가
+        container.setMaxBinaryMessageBufferSize(256 * 1024 * 1024); // 256MB로 증가
         container.setMaxSessionIdleTimeout(60000L);
         return container;
     }
@@ -80,8 +80,8 @@ public class WebSocketStompConfig implements WebSocketMessageBrokerConfigurer {
     @Override
     public void configureWebSocketTransport(WebSocketTransportRegistration registration) {
         registration
-            .setMessageSizeLimit(20 * 1024 * 1024)      // 20MB로 증가
-            .setSendBufferSizeLimit(50 * 1024 * 1024)   // 50MB로 증가
+            .setMessageSizeLimit(50 * 1024 * 1024)      // 50MB로 증가
+            .setSendBufferSizeLimit(256 * 1024 * 1024)  // 256MB로 증가
             .setSendTimeLimit(120 * 1000)               // 120초로 증가
             .setTimeToFirstMessage(30 * 1000);         // 첫 메시지까지 30초
         

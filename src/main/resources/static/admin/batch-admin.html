@@ -107,13 +107,21 @@
         /* iframe 전체 화면 */
         .page-content {
             height: 100%;
+            overflow-y: auto;
         }
         
         .page-content iframe {
             width: 100%;
             height: 100%;
             border: none;
+            overflow-y: auto;
         }
+
+        #history-page .table-responsive {
+            max-height: calc(100vh - 300px);
+            overflow-y: auto;
+        }
+
         
     </style>
 </head>

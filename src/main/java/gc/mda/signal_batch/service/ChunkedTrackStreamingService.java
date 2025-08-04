@@ -34,6 +34,8 @@ import gc.mda.signal_batch.dto.websocket.QueryStatusUpdate;
 import gc.mda.signal_batch.dto.websocket.ViewportFilter;
 import org.springframework.scheduling.annotation.Async;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 청크 기반 궤적 스트리밍 서비스
@@ -50,7 +52,8 @@ public class ChunkedTrackStreamingService {
     private final ExecutorService executorService = Executors.newFixedThreadPool(10);
     private static final DateTimeFormatter TIMESTAMP_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private static final int MAX_TRACKS_PER_CHUNK = 20000; // 청크당 최대 트랙 수 (버퍼 오버플로우 방지)
-    private static final int MAX_MESSAGE_SIZE_KB = 3072; // 메시지당 최대 크기 1MB로 조정
+    private static final int MAX_MESSAGE_SIZE_KB = 1024; // 메시지당 최대 크기 1MB로 축소
+    private static final int MIN_MESSAGE_SIZE_KB = 256;  // 최소 메시지 크기 256KB로 축소
     
     // 진행률 추적용 변수
     private int estimatedTotalMinutes = 0;
@@ -58,6 +61,11 @@ public class ChunkedTrackStreamingService {
     private final Map<String, Integer> processedTimeRanges = new HashMap<>();
     private final AtomicLong pendingBufferSize = new AtomicLong(0);
     private static final long MAX_PENDING_BUFFER = 50 * 1024 * 1024; // 50MB
+    private static final long WARNING_BUFFER_THRESHOLD = 40 * 1024 * 1024; // 40MB (80%)
+    
+    // 백프레셔 관련 변수
+    private final Map<String, BackpressureMetrics> queryMetrics = new ConcurrentHashMap<>();
+    private volatile int currentChunkSizeKB = MAX_MESSAGE_SIZE_KB;
     
     public ChunkedTrackStreamingService(
             @Qualifier("queryJdbcTemplate") JdbcTemplate queryJdbcTemplate,
@@ -66,6 +74,18 @@ public class ChunkedTrackStreamingService {
         this.queryJdbcTemplate = queryJdbcTemplate;
         this.queryDataSource = queryDataSource;
         this.simplificationStrategy = simplificationStrategy;
+    }
+    
+    /**
+     * 백프레셔 메트릭스 추적용 내부 클래스
+     */
+    private static class BackpressureMetrics {
+        private final AtomicLong totalBytes = new AtomicLong(0);
+        private final AtomicInteger chunkCount = new AtomicInteger(0);
+        private final AtomicInteger bufferWarnings = new AtomicInteger(0);
+        private final AtomicInteger backpressureEvents = new AtomicInteger(0);
+        private volatile long lastWarningTime = 0;
+        private volatile int dynamicChunkSizeKB = MAX_MESSAGE_SIZE_KB;
     }
     
     /**
@@ -398,7 +418,7 @@ public class ChunkedTrackStreamingService {
     /**
      * 비동기 스트리밍 메서드 (컨트롤러에서 호출)
      */
-    @Async
+    @Async("trackStreamingExecutor")
     public void streamChunkedTracks(TrackQueryRequest request,
                                    String queryId,
                                    Consumer<TrackChunkResponse> chunkConsumer,
@@ -407,6 +427,14 @@ public class ChunkedTrackStreamingService {
             log.info("Starting chunked streaming for query: {}", queryId);
             queryStartTime = System.currentTimeMillis();
             processedTimeRanges.clear();
+            
+            // 백프레셔 메트릭스 초기화
+            BackpressureMetrics metrics = new BackpressureMetrics();
+            queryMetrics.put(queryId, metrics);
+            pendingBufferSize.set(0);
+            
+            log.info("[BACKPRESSURE] Query {} initialized - Buffer size: 0, Max buffer: {}MB", 
+                queryId, MAX_PENDING_BUFFER / (1024 * 1024));
             
             // 시간 범위별 테이블 전략 분할
             Map<TableStrategy, List<TimeRange>> strategyMap = splitTimeRangeByStrategy(
@@ -521,7 +549,7 @@ public class ChunkedTrackStreamingService {
                             log.info("[{}] Time window {} - Merged {} vessels, Total {} points", 
                                 strategy, groupKey, mergedTracks.size(), totalOriginalPoints);
                             
-                            List<List<CompactVesselTrack>> batches = splitByMessageSize(mergedTracks);
+                            List<List<CompactVesselTrack>> batches = splitByMessageSize(mergedTracks, queryId);
                             
                             for (List<CompactVesselTrack> batch : batches) {
                                 TrackChunkResponse response = new TrackChunkResponse();
@@ -540,11 +568,44 @@ public class ChunkedTrackStreamingService {
                                 
                                 // 버퍼 크기 계산 및 추가
                                 int chunkSize = batch.stream().mapToInt(t -> estimateTrackSize(t)).sum();
-                                pendingBufferSize.addAndGet(chunkSize);
+                                long currentBufferSize = pendingBufferSize.addAndGet(chunkSize);
+                                metrics.totalBytes.addAndGet(chunkSize);
+                                metrics.chunkCount.incrementAndGet();
                                 
-                                // 버퍼가 가득 찬 경우 대기
+                                // 버퍼 사용률 로그
+                                double bufferUsage = (double) currentBufferSize / MAX_PENDING_BUFFER * 100;
+                                if (bufferUsage > 80 && System.currentTimeMillis() - metrics.lastWarningTime > 5000) {
+                                    metrics.bufferWarnings.incrementAndGet();
+                                    metrics.lastWarningTime = System.currentTimeMillis();
+                                    log.warn("[BACKPRESSURE] Query {} - Buffer usage high: {}% ({} MB / {} MB)", 
+                                        queryId, String.format("%.1f", bufferUsage), currentBufferSize / (1024 * 1024), 
+                                        MAX_PENDING_BUFFER / (1024 * 1024));
+                                }
+                                
+                                // 버퍼가 가듍 찬 경우 대기 및 동적 청크 크기 조절
+                                int backpressureWaitCount = 0;
                                 while (pendingBufferSize.get() > MAX_PENDING_BUFFER) {
+                                    if (backpressureWaitCount == 0) {
+                                        metrics.backpressureEvents.incrementAndGet();
+                                        log.warn("[BACKPRESSURE] Query {} - Buffer full! Waiting for buffer to drain. Current: {} MB", 
+                                            queryId, pendingBufferSize.get() / (1024 * 1024));
+                                    }
                                     Thread.sleep(50);
+                                    backpressureWaitCount++;
+                                    
+                                    // 500ms 이상 대기 시 청크 크기 감소
+                                    if (backpressureWaitCount > 10 && metrics.dynamicChunkSizeKB > MIN_MESSAGE_SIZE_KB) {
+                                        int oldSize = metrics.dynamicChunkSizeKB;
+                                        metrics.dynamicChunkSizeKB = Math.max(MIN_MESSAGE_SIZE_KB, 
+                                            metrics.dynamicChunkSizeKB - 512);
+                                        log.info("[BACKPRESSURE] Query {} - Reducing chunk size: {} KB -> {} KB", 
+                                            queryId, oldSize, metrics.dynamicChunkSizeKB);
+                                    }
+                                }
+                                
+                                if (backpressureWaitCount > 0) {
+                                    log.info("[BACKPRESSURE] Query {} - Buffer drained after {} ms wait", 
+                                        queryId, backpressureWaitCount * 50);
                                 }
                                 
                                 // 즉시 전송
@@ -608,6 +669,22 @@ public class ChunkedTrackStreamingService {
             log.info("Query {} completed: {} chunks, {} unique vessels", 
                 queryId, globalChunkIndex, uniqueVesselIds.size());
             
+            // 백프레셔 통계 출력
+            if (metrics != null) {
+                log.info("[BACKPRESSURE] Query {} statistics:", queryId);
+                log.info("[BACKPRESSURE] - Total bytes sent: {} MB", metrics.totalBytes.get() / (1024 * 1024));
+                log.info("[BACKPRESSURE] - Total chunks: {}", metrics.chunkCount.get());
+                log.info("[BACKPRESSURE] - Buffer warnings: {}", metrics.bufferWarnings.get());
+                log.info("[BACKPRESSURE] - Backpressure events: {}", metrics.backpressureEvents.get());
+                log.info("[BACKPRESSURE] - Final chunk size: {} KB (original: {} KB)", 
+                    metrics.dynamicChunkSizeKB, MAX_MESSAGE_SIZE_KB);
+                
+                if (metrics.chunkCount.get() > 0) {
+                    double avgChunkSize = (double) metrics.totalBytes.get() / metrics.chunkCount.get() / 1024;
+                    log.info("[BACKPRESSURE] - Average chunk size: {} KB", String.format("%.1f", avgChunkSize));
+                }
+            }
+            
             // 완료 상태
             statusConsumer.accept(new QueryStatusUpdate(
                 queryId,
@@ -618,12 +695,24 @@ public class ChunkedTrackStreamingService {
             
         } catch (Exception e) {
             log.error("Error in chunked streaming: {}", e.getMessage(), e);
+            
+            // 에러 시에도 백프레셔 통계 출력
+            BackpressureMetrics errorMetrics = queryMetrics.get(queryId);
+            if (errorMetrics != null) {
+                log.error("[BACKPRESSURE] Query {} failed with statistics:", queryId);
+                log.error("[BACKPRESSURE] - Chunks sent before error: {}", errorMetrics.chunkCount.get());
+                log.error("[BACKPRESSURE] - Backpressure events: {}", errorMetrics.backpressureEvents.get());
+            }
+            
             statusConsumer.accept(new QueryStatusUpdate(
                 queryId,
                 "ERROR",
                 "Error: " + e.getMessage(),
                 0.0
             ));
+        } finally {
+            // 쿼리 메트릭스 정리
+            cleanupQueryMetrics(queryId);
         }
     }
     
@@ -633,12 +722,33 @@ public class ChunkedTrackStreamingService {
     public void cancelQuery(String queryId) {
         log.info("Cancelling chunked query: {}", queryId);
         // TODO: 실제 취소 로직 구현
+        cleanupQueryMetrics(queryId);
     }
     
     /**
-     * 메시지 크기 기반으로 트랙 분할
+     * 쿼리 메트릭스 정리
+     */
+    private void cleanupQueryMetrics(String queryId) {
+        BackpressureMetrics removed = queryMetrics.remove(queryId);
+        if (removed != null) {
+            log.debug("[BACKPRESSURE] Cleaned up metrics for query {}", queryId);
+        }
+    }
+    
+    /**
+     * 메시지 크기 기반으로 트랙 분할 (동적 크기 적용)
      */
     private List<List<CompactVesselTrack>> splitByMessageSize(List<CompactVesselTrack> tracks) {
+        return splitByMessageSize(tracks, null);
+    }
+    
+    private List<List<CompactVesselTrack>> splitByMessageSize(List<CompactVesselTrack> tracks, String queryId) {
+        // 쿼리에 대한 동적 청크 크기 가져오기
+        int maxChunkSizeKB = MAX_MESSAGE_SIZE_KB;
+        if (queryId != null && queryMetrics.containsKey(queryId)) {
+            maxChunkSizeKB = queryMetrics.get(queryId).dynamicChunkSizeKB;
+        }
+        
         List<List<CompactVesselTrack>> batches = new ArrayList<>();
         List<CompactVesselTrack> currentBatch = new ArrayList<>();
         int currentSize = 0;
@@ -647,7 +757,7 @@ public class ChunkedTrackStreamingService {
             int trackSize = estimateTrackSize(track);
             
             // 현재 배치가 크기 제한을 초과하고 비어있지 않으면 새 배치 시작
-            if (currentSize + trackSize > MAX_MESSAGE_SIZE_KB * 1024 && !currentBatch.isEmpty()) {
+            if (currentSize + trackSize > maxChunkSizeKB * 1024 && !currentBatch.isEmpty()) {
                 batches.add(new ArrayList<>(currentBatch));
                 currentBatch.clear();
                 currentSize = 0;
@@ -663,7 +773,7 @@ public class ChunkedTrackStreamingService {
         }
         
         log.info("[splitByMessageSize] {} tracks split into {} batches (max size: {}KB)", 
-            tracks.size(), batches.size(), MAX_MESSAGE_SIZE_KB);
+            tracks.size(), batches.size(), maxChunkSizeKB);
         
         return batches;
     }
