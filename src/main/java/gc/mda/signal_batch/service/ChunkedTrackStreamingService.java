@@ -33,6 +33,7 @@ import java.util.function.Consumer;
 import gc.mda.signal_batch.dto.websocket.QueryStatusUpdate;
 import gc.mda.signal_batch.dto.websocket.ViewportFilter;
 import org.springframework.scheduling.annotation.Async;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * 청크 기반 궤적 스트리밍 서비스
@@ -48,13 +49,15 @@ public class ChunkedTrackStreamingService {
     private final WKTReader wktReader = new WKTReader();
     private final ExecutorService executorService = Executors.newFixedThreadPool(10);
     private static final DateTimeFormatter TIMESTAMP_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-    private static final int MAX_TRACKS_PER_CHUNK = 50000; // 청크당 최대 트랙 수 (5min 테이블 최적화)
-    private static final int MAX_MESSAGE_SIZE_KB = 768; // 메시지당 최대 크기 768KB로 조정
+    private static final int MAX_TRACKS_PER_CHUNK = 20000; // 청크당 최대 트랙 수 (버퍼 오버플로우 방지)
+    private static final int MAX_MESSAGE_SIZE_KB = 3072; // 메시지당 최대 크기 1MB로 조정
     
     // 진행률 추적용 변수
     private int estimatedTotalMinutes = 0;
     private long queryStartTime = 0;
     private final Map<String, Integer> processedTimeRanges = new HashMap<>();
+    private final AtomicLong pendingBufferSize = new AtomicLong(0);
+    private static final long MAX_PENDING_BUFFER = 50 * 1024 * 1024; // 50MB
     
     public ChunkedTrackStreamingService(
             @Qualifier("queryJdbcTemplate") JdbcTemplate queryJdbcTemplate,
@@ -111,12 +114,8 @@ public class ChunkedTrackStreamingService {
             }
             
             // PostgreSQL 스트리밍 설정
-            // FetchSize 최적화 - 5min 테이블은 데이터가 많아 더 크게 설정
-            if (tableName.contains("5min")) {
-                ps.setFetchSize(5000);
-            } else {
-                ps.setFetchSize(1000);
-            }
+            // FetchSize 최적화 - 메모리가 충분하므로 기존 유지
+            ps.setFetchSize(5000);
             
             try (ResultSet rs = ps.executeQuery()) {
                 int trackCount = 0;
@@ -539,8 +538,27 @@ public class ChunkedTrackStreamingService {
                                 int currentProcessedMin = processedTimeRanges.values().stream().mapToInt(Integer::intValue).sum();
                                 response.setStats(createChunkStats(batch, uniqueVesselIds, currentProcessedMin));
                                 
+                                // 버퍼 크기 계산 및 추가
+                                int chunkSize = batch.stream().mapToInt(t -> estimateTrackSize(t)).sum();
+                                pendingBufferSize.addAndGet(chunkSize);
+                                
+                                // 버퍼가 가득 찬 경우 대기
+                                while (pendingBufferSize.get() > MAX_PENDING_BUFFER) {
+                                    Thread.sleep(50);
+                                }
+                                
                                 // 즉시 전송
                                 chunkConsumer.accept(response);
+                                
+                                // 전송 완료 후 버퍼 크기 감소 (비동기 처리 고려)
+                                CompletableFuture.runAsync(() -> {
+                                    try {
+                                        Thread.sleep(100); // 네트워크 전송 시간 고려
+                                        pendingBufferSize.addAndGet(-chunkSize);
+                                    } catch (InterruptedException e) {
+                                        Thread.currentThread().interrupt();
+                                    }
+                                });
                                 
                                 // 유니크 선박 카운트
                                 batch.forEach(track -> uniqueVesselIds.add(track.getVesselId()));
@@ -555,8 +573,10 @@ public class ChunkedTrackStreamingService {
                                     Math.min(99.0, timeProgress)
                                 ));
                                 
-                                // 최적화된 대기 시간 - 전체 데이터 크기에 따라 조절
-                                int waitTime = uniqueVesselIds.size() > 10000 ? 50 : 10;
+                                // 버퍼 사용률에 따른 동적 대기
+                                long currentBuffer = pendingBufferSize.get();
+                                int waitTime = currentBuffer > 30_000_000 ? 100 : 
+                                               currentBuffer > 10_000_000 ? 50 : 10;
                                 Thread.sleep(waitTime);
                                 
                                 // 진행 상황 로그 (매 10번째 청크마다)
