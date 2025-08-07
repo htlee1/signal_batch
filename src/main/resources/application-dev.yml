@@ -42,12 +42,16 @@ spring:
         connection-timeout: 5000
         idle-timeout: 600000
         max-lifetime: 1800000
-        maximum-pool-size: 40  # 20 -> 40 증가
+        maximum-pool-size: 60  # 20 -> 40 증가
         minimum-idle: 10  # 5 -> 10 증가
         connection-test-query: SELECT 1
         validation-timeout: 5000
         leak-detection-threshold: 60000  # 커넥션 누수 감지 (60초)
         connection-init-sql: "SET TIME ZONE 'Asia/Seoul'; SET search_path TO signal, public;"
+        statement-cache-size: 250
+        data-source-properties:
+          prepareThreshold: 3
+          preparedStatementCacheQueries: 250
 
     # 로컬 배치 메타 DB
     batch:
@@ -57,7 +61,7 @@ spring:
       driver-class-name: org.postgresql.Driver
       hikari:
         pool-name: BatchHikariPool
-        maximum-pool-size: 30  # 10 → 30 증가
+        maximum-pool-size: 20  # 10 → 30 증가
         minimum-idle: 10       # 2 → 10 증가
         connection-timeout: 30000  # 30초 타임아웃
         idle-timeout: 600000
@@ -87,7 +91,7 @@ logging:
     gc.mda.signal_batch.writer: INFO
     gc.mda.signal_batch.reader: INFO
     gc.mda.signal_batch.processor: INFO
-    gc.mda.signal_batch.service: WARN
+    gc.mda.signal_batch.service: INFO
     gc.mda.signal_batch.monitor: DEBUG
     org.springframework.batch: INFO
     org.springframework.jdbc: WARN
@@ -102,7 +106,7 @@ vessel:  # spring 하위가 아닌 최상위 레벨
       chunk-size: 1000     # 5000 → 1000
       batch-size: 500      # 새로 추가
     
-    chunk-size: 5000
+    chunk-size: 10000
     page-size: 5000
     partition-size: 12
     
@@ -134,8 +138,8 @@ vessel:  # spring 하위가 아닌 최상위 레벨
 
     # Bulk Insert 최적화
     bulk-insert:
-      batch-size: 5000
-      parallel-threads: 4
+      batch-size: 10000
+      parallel-threads: 8
       use-binary-copy: false
 
     # Writer 설정

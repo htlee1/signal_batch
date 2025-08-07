@@ -1,5 +1,6 @@
 package gc.mda.signal_batch.service;
 
+import gc.mda.signal_batch.util.ShipKindCodeConverter;
 import gc.mda.signal_batch.dto.websocket.TrackChunkResponse;
 import gc.mda.signal_batch.dto.CompactVesselTrack;
 import gc.mda.signal_batch.dto.websocket.TrackQueryRequest;
@@ -55,6 +56,11 @@ public class ChunkedTrackStreamingService {
     private static final int MAX_MESSAGE_SIZE_KB = 1024; // 메시지당 최대 크기 1MB로 축소
     private static final int MIN_MESSAGE_SIZE_KB = 256;  // 최소 메시지 크기 256KB로 축소
     
+    // 선박 정보 캐시 (TTL: 1시간)
+    private final ConcurrentHashMap<String, VesselInfo> vesselInfoCache = new ConcurrentHashMap<>();
+    private static final long VESSEL_CACHE_TTL = 3600_000; // 1시간
+    private volatile long lastCacheCleanup = System.currentTimeMillis();
+    
     // 진행률 추적용 변수
     private int estimatedTotalMinutes = 0;
     private long queryStartTime = 0;
@@ -77,6 +83,25 @@ public class ChunkedTrackStreamingService {
     }
     
     /**
+     * 선박 정보 캐시용 내부 클래스
+     */
+    private static class VesselInfo {
+        String shipName;
+        String shipType;
+        long cacheTime;
+        
+        VesselInfo(String shipName, String shipType) {
+            this.shipName = shipName != null ? shipName : "-";
+            this.shipType = shipType != null ? shipType : "-";
+            this.cacheTime = System.currentTimeMillis();
+        }
+        
+        boolean isExpired() {
+            return System.currentTimeMillis() - cacheTime > VESSEL_CACHE_TTL;
+        }
+    }
+    
+    /**
      * 백프레셔 메트릭스 추적용 내부 클래스
      */
     private static class BackpressureMetrics {
@@ -95,12 +120,123 @@ public class ChunkedTrackStreamingService {
     private static class VesselAccumulator {
         String sigSrcCd;
         String targetId;
+        String shipName;  // 선명 추가
+        String shipType;  // 선종 추가
+        String shipKindCode;  // 선박 종류 코드 추가
         List<double[]> geometry = new ArrayList<>(500);
         List<String> timestamps = new ArrayList<>(500);
         List<Double> speeds = new ArrayList<>(500);
         double totalDistance = 0;
         double maxSpeed = 0;
         int pointCount = 0;
+    }
+    
+    /**
+     * 선박 정보 조회 (캐시 우선)
+     */
+    private VesselInfo getVesselInfo(String sigSrcCd, String targetId) {
+        String vesselKey = sigSrcCd + "_" + targetId;
+        
+        // 캐시 청소 (10분마다)
+        if (System.currentTimeMillis() - lastCacheCleanup > 600_000) {
+            cleanupVesselCache();
+        }
+        
+        // 캐시에서 조회
+        VesselInfo cached = vesselInfoCache.get(vesselKey);
+        if (cached != null && !cached.isExpired()) {
+            return cached;
+        }
+        
+        // DB에서 조회
+        try {
+            String sql = "SELECT ship_nm, ship_ty FROM signal.t_vessel_latest_position " +
+                        "WHERE sig_src_cd = ? AND target_id = ?";
+            
+            VesselInfo info = queryJdbcTemplate.queryForObject(sql, 
+                (rs, rowNum) -> new VesselInfo(
+                    rs.getString("ship_nm"),
+                    rs.getString("ship_ty")
+                ),
+                sigSrcCd, targetId
+            );
+            
+            // 캐시에 저장
+            vesselInfoCache.put(vesselKey, info);
+            log.debug("Vessel info loaded from DB and cached: {} - {} ({})", 
+                     vesselKey, info.shipName, info.shipType);
+            return info;
+            
+        } catch (Exception e) {
+            log.debug("No vessel info found for {}, using defaults", vesselKey);
+            VesselInfo defaultInfo = new VesselInfo(null, null);
+            // 기본값도 캐시에 저장 (DB 부하 감소)
+            vesselInfoCache.put(vesselKey, defaultInfo);
+            return defaultInfo;
+        }
+    }
+    
+    /**
+     * 선박 캐시 정리
+     */
+    private void cleanupVesselCache() {
+        int before = vesselInfoCache.size();
+        vesselInfoCache.entrySet().removeIf(entry -> entry.getValue().isExpired());
+        int after = vesselInfoCache.size();
+        lastCacheCleanup = System.currentTimeMillis();
+        log.info("Vessel cache cleanup: {} -> {} entries", before, after);
+    }
+    
+    /**
+     * 선박 정보 배치 조회
+     */
+    private Map<String, VesselInfo> batchGetVesselInfo(Set<String> vesselIds) {
+        Map<String, VesselInfo> result = new HashMap<>();
+        List<String> uncachedIds = new ArrayList<>();
+        
+        // 캐시 확인
+        for (String vesselId : vesselIds) {
+            VesselInfo cached = vesselInfoCache.get(vesselId);
+            if (cached != null && !cached.isExpired()) {
+                result.put(vesselId, cached);
+            } else {
+                uncachedIds.add(vesselId);
+            }
+        }
+        
+        // 캐시에 없는 것들은 DB에서 배치 조회
+        if (!uncachedIds.isEmpty()) {
+            try {
+                String sql = "SELECT sig_src_cd, target_id, ship_nm, ship_ty " +
+                            "FROM signal.t_vessel_latest_position " +
+                            "WHERE sig_src_cd || '_' || target_id IN (" +
+                            String.join(",", Collections.nCopies(uncachedIds.size(), "?")) + ")";
+                
+                queryJdbcTemplate.query(sql, rs -> {
+                    String vesselId = rs.getString("sig_src_cd") + "_" + rs.getString("target_id");
+                    VesselInfo info = new VesselInfo(
+                        rs.getString("ship_nm"),
+                        rs.getString("ship_ty")
+                    );
+                    result.put(vesselId, info);
+                    vesselInfoCache.put(vesselId, info);
+                }, uncachedIds.toArray());
+                
+                log.info("Batch loaded {} vessel infos from DB", result.size() - (vesselIds.size() - uncachedIds.size()));
+            } catch (Exception e) {
+                log.warn("Failed to batch load vessel info: {}", e.getMessage());
+                // 기본값 설정
+                for (String vesselId : uncachedIds) {
+                    if (!result.containsKey(vesselId)) {
+                        VesselInfo defaultInfo = new VesselInfo(null, null);
+                        result.put(vesselId, defaultInfo);
+                        vesselInfoCache.put(vesselId, defaultInfo);
+                    }
+                }
+            }
+        }
+        
+        return result;
     }
     
     private List<CompactVesselTrack> processTableRange(TrackQueryRequest request, TableStrategy strategy, TimeRange range) {
@@ -218,6 +354,21 @@ public class ChunkedTrackStreamingService {
                                 accumulator = new VesselAccumulator();
                                 accumulator.sigSrcCd = sigSrcCd;
                                 accumulator.targetId = targetId;
+                                
+                                // 선박 정보 조회 (캐시 우선)
+                                VesselInfo vesselInfo = getVesselInfo(sigSrcCd, targetId);
+                                accumulator.shipName = vesselInfo.shipName;
+                                accumulator.shipType = vesselInfo.shipType;
+                                
+                                // shipKindCode 계산
+                                accumulator.shipKindCode = ShipKindCodeConverter.getShipKindCode(sigSrcCd, vesselInfo.shipType);
+                                
+                                // 테스트용 로그 - 처음 10개 선박만
+//                                if (vesselCount <= 10) {
+//                                    log.info("[VESSEL_INFO] {} - Name: {}, Type: {}",
+//                                            vesselId, vesselInfo.shipName, vesselInfo.shipType);
+//                                }
+                                
                                 vesselMap.put(vesselId, accumulator);
                             }
                             
@@ -272,6 +423,9 @@ public class ChunkedTrackStreamingService {
                     .vesselId(vesselId)
                     .sigSrcCd(acc.sigSrcCd)
                     .targetId(acc.targetId)
+                    .shipName(acc.shipName)  // 선명 추가
+                    .shipType(acc.shipType)  // 선종 추가
+                    .shipKindCode(acc.shipKindCode)  // 선박 종류 코드 추가
                     .geometry(acc.geometry)
                     .timestamps(acc.timestamps)
                     .speeds(acc.speeds)
@@ -493,6 +647,15 @@ public class ChunkedTrackStreamingService {
                                         accumulator = new VesselAccumulator();
                                         accumulator.sigSrcCd = track.getSigSrcCd();
                                         accumulator.targetId = track.getTargetId();
+                                        
+                                        // 선박 정보 조회 (캐시 우선) - 추가
+                                        VesselInfo vesselInfo = getVesselInfo(track.getSigSrcCd(), track.getTargetId());
+                                        accumulator.shipName = vesselInfo.shipName;
+                                        accumulator.shipType = vesselInfo.shipType;
+                                        
+                                        // shipKindCode 계산
+                                        accumulator.shipKindCode = ShipKindCodeConverter.getShipKindCode(track.getSigSrcCd(), vesselInfo.shipType);
+                                        
                                         mergedMap.put(vesselId, accumulator);
                                     }
                                     
@@ -530,6 +693,9 @@ public class ChunkedTrackStreamingService {
                                 .vesselId(vesselId)
                                 .sigSrcCd(acc.sigSrcCd)
                                 .targetId(acc.targetId)
+                                .shipName(acc.shipName)  // 선명 추가
+                                .shipType(acc.shipType)  // 선종 추가
+                                .shipKindCode(acc.shipKindCode)  // 선박 종류 코드 추가
                                 .geometry(acc.geometry)
                                 .timestamps(acc.timestamps)
                                 .speeds(acc.speeds)

@@ -30,4 +30,9 @@ public class CompactVesselTrack {
     private Double avgSpeed;           // 평균속도 (knots)
     private Double maxSpeed;           // 최대속도 (knots)
     private Integer pointCount;        // 포인트 수
+    
+    // 선박 정보
+    private String shipName;           // 선명
+    private String shipType;           // 선종
+    private String shipKindCode;       // 선박 종류 코드
 }
