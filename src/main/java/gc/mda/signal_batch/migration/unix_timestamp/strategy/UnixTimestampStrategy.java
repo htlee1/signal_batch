@@ -17,7 +17,8 @@ import java.util.stream.Collectors;
 @Component("unixTimestampStrategy")
 public class UnixTimestampStrategy implements MValueStrategy {
     
-    private static final ZoneOffset KST_OFFSET = ZoneOffset.ofHours(9);
+    // Unix timestamp is always UTC-based absolute value
+    private static final ZoneOffset UTC_OFFSET = ZoneOffset.UTC;
     
     @Override
     public String buildLineStringM(List<VesselTrack.TrackPoint> points) {
@@ -28,7 +29,8 @@ public class UnixTimestampStrategy implements MValueStrategy {
         // 단일 포인트 처리: 같은 포인트를 복사
         if (points.size() == 1) {
             VesselTrack.TrackPoint p = points.get(0);
-            long unixTime = p.getTime().toEpochSecond(KST_OFFSET);
+            // DB LocalDateTime is UTC, convert directly to Unix timestamp
+            long unixTime = p.getTime().toEpochSecond(UTC_OFFSET);
             String pointStr = String.format("%.6f %.6f %d", 
                 p.getLon(), p.getLat(), unixTime);
             return "LINESTRING M (" + pointStr + ", " + pointStr + ")";
@@ -36,7 +38,8 @@ public class UnixTimestampStrategy implements MValueStrategy {
         
         return "LINESTRING M (" + points.stream()
             .map(p -> {
-                long unixTime = p.getTime().toEpochSecond(KST_OFFSET);
+                // DB LocalDateTime is UTC, convert directly to Unix timestamp
+                long unixTime = p.getTime().toEpochSecond(UTC_OFFSET);
                 return String.format("%.6f %.6f %d", 
                     p.getLon(), p.getLat(), unixTime);
             })
@@ -57,7 +60,8 @@ public class UnixTimestampStrategy implements MValueStrategy {
     
     @Override
     public LocalDateTime convertToDateTime(long mValue, LocalDateTime baseTime) {
-        // Unix timestamp는 baseTime 불필요
-        return LocalDateTime.ofEpochSecond(mValue, 0, KST_OFFSET);
+        // Unix timestamp를 UTC LocalDateTime으로 변환
+        // 프론트엔드에서 시간대 처리
+        return LocalDateTime.ofEpochSecond(mValue, 0, UTC_OFFSET);
     }
 }

@@ -40,7 +40,12 @@ public class DailyTrackProcessor implements ItemProcessor<VesselTrack.VesselKey,
                 .withSecond(0)
                 .withNano(0);
         
-        // 1시간 데이터 병합 쿼리 - MIGRATION_V2: 동적 컬럼 선택
+        // dual-write 모드에서 track_geom_v2 처리를 위한 분기
+        if (dualWrite) {
+            return processDualWrite(vesselKey, dayBucket);
+        }
+        
+        // 기존 단일 모드 처리
         String geomColumn = readColumn; // track_geom 또는 track_geom_v2
         String sql = String.format("""
             WITH ordered_tracks AS (
@@ -134,7 +139,7 @@ public class DailyTrackProcessor implements ItemProcessor<VesselTrack.VesselKey,
                 end_time,
                 start_pos,
                 end_pos,
-                ST_AsText(merged_geom) as geom_text 
+                ST_AsText(merged_geom) as geom_text
             FROM calculated_tracks
         """, geomColumn, geomColumn, geomColumn);
         
@@ -204,9 +209,9 @@ public class DailyTrackProcessor implements ItemProcessor<VesselTrack.VesselKey,
         
         // MIGRATION_V2: dual-write 지원
         if (dualWrite) {
-            // 양쪽 컬럼에 모두 저장
+            // track_geom: 상대시간 그대로 저장
             builder.trackGeom(simplifiedLineStringM);
-            builder.trackGeomV2(simplifiedLineStringM);
+            // track_geom_v2는 processDualWrite에서 별도 처리
         } else if ("track_geom_v2".equals(readColumn)) {
             // track_geom_v2만 사용
             builder.trackGeomV2(simplifiedLineStringM);
@@ -237,5 +242,180 @@ public class DailyTrackProcessor implements ItemProcessor<VesselTrack.VesselKey,
         }
     }
     
-
+    /**
+     * MIGRATION_V2: Dual-write 모드 처리 - track_geom과 track_geom_v2 분리 처리
+     */
+    private VesselTrack processDualWrite(VesselTrack.VesselKey vesselKey, LocalDateTime dayBucket) throws Exception {
+        LocalDateTime startTime = dayBucket;
+        LocalDateTime endTime = dayBucket.plusDays(1);
+        
+        // 1. track_geom용 복잡한 상대시간 재계산 쿼리
+        String relativeTimeSql = """
+            WITH ordered_tracks AS (
+                SELECT *
+                FROM signal.t_vessel_tracks_hourly
+                WHERE sig_src_cd = ?
+                    AND target_id = ?
+                    AND time_bucket >= ?
+                    AND time_bucket < ?
+                ORDER BY time_bucket
+            ),
+            first_track_time AS (
+                SELECT 
+                    (start_position->>'time')::timestamp as first_time
+                FROM ordered_tracks
+                ORDER BY time_bucket
+                LIMIT 1
+            ),
+            track_points AS (
+                SELECT 
+                    o.sig_src_cd,
+                    o.target_id,
+                    o.time_bucket,
+                    (ST_DumpPoints(o.track_geom)).geom as point,
+                    (ST_DumpPoints(o.track_geom)).path[1] as point_order,
+                    ST_M((ST_DumpPoints(o.track_geom)).geom) as original_m,
+                    (o.start_position->>'time')::timestamp as track_start_time
+                FROM ordered_tracks o
+            ),
+            merged_tracks AS (
+                SELECT 
+                    sig_src_cd,
+                    target_id,
+                    ?::timestamp as time_bucket,
+                    CASE 
+                        WHEN COUNT(point) = 1 THEN
+                            ST_GeomFromText(
+                                'LINESTRING M(' || 
+                                ST_X(MIN(point)) || ' ' || ST_Y(MIN(point)) || ' ' || 
+                                (EXTRACT(EPOCH FROM MIN(track_start_time) - (SELECT first_time FROM first_track_time)) + MIN(original_m)) || ',' ||
+                                ST_X(MIN(point)) || ' ' || ST_Y(MIN(point)) || ' ' || 
+                                (EXTRACT(EPOCH FROM MIN(track_start_time) - (SELECT first_time FROM first_track_time)) + MIN(original_m)) || ')'
+                            )
+                        ELSE
+                            ST_MakeLine(
+                                ST_MakePointM(
+                                    ST_X(point), 
+                                    ST_Y(point), 
+                                    EXTRACT(EPOCH FROM track_start_time - (SELECT first_time FROM first_track_time)) + original_m
+                                ) ORDER BY time_bucket, point_order
+                            )
+                    END as merged_geom,
+                    MAX(max_speed) as max_speed,
+                    SUM(point_count) as total_points,
+                    MIN(time_bucket) as start_time,
+                    MAX(time_bucket) as end_time,
+                    (SELECT start_position FROM ordered_tracks ORDER BY time_bucket LIMIT 1) as start_pos,
+                    (SELECT end_position FROM ordered_tracks ORDER BY time_bucket DESC LIMIT 1) as end_pos
+                FROM ordered_tracks
+                JOIN track_points USING (sig_src_cd, target_id, time_bucket)
+                GROUP BY sig_src_cd, target_id
+            ),
+            calculated_tracks AS (
+                SELECT 
+                    *,
+                    ST_Length(merged_geom::geography) / 1852.0 as total_distance,
+                    EXTRACT(EPOCH FROM 
+                        (end_pos->>'time')::timestamp - (start_pos->>'time')::timestamp
+                    ) as time_diff_seconds
+                FROM merged_tracks
+            )
+            SELECT 
+                sig_src_cd,
+                target_id,
+                time_bucket,
+                merged_geom,
+                total_distance,
+                CASE 
+                    WHEN time_diff_seconds > 0 THEN 
+                        LEAST((total_distance / (time_diff_seconds / 3600.0)), 9999.99)::numeric(6,2)
+                    ELSE 0
+                END as avg_speed,
+                max_speed,
+                total_points,
+                start_time,
+                end_time,
+                start_pos,
+                end_pos,
+                ST_AsText(merged_geom) as geom_text 
+            FROM calculated_tracks
+        """;
+        
+        // 2. track_geom_v2용 단순 병합 쿼리 (Unix timestamp 그대로 사용)
+        String unixTimeSql = """
+            WITH ordered_tracks AS (
+                SELECT *
+                FROM signal.t_vessel_tracks_hourly
+                WHERE sig_src_cd = ?
+                    AND target_id = ?
+                    AND time_bucket >= ?
+                    AND time_bucket < ?
+                    AND track_geom_v2 IS NOT NULL
+                ORDER BY time_bucket
+            ),
+            track_points AS (
+                SELECT 
+                    sig_src_cd,
+                    target_id,
+                    time_bucket,
+                    (ST_DumpPoints(track_geom_v2)).geom as point,
+                    (ST_DumpPoints(track_geom_v2)).path[1] as point_order
+                FROM ordered_tracks
+            ),
+            merged_tracks AS (
+                SELECT 
+                    sig_src_cd,
+                    target_id,
+                    CASE 
+                        WHEN COUNT(point) = 1 THEN
+                            -- 단일 포인트 처리
+                            ST_GeomFromText(
+                                'LINESTRING M(' || 
+                                ST_X(MIN(point)) || ' ' || ST_Y(MIN(point)) || ' ' || ST_M(MIN(point)) || ',' ||
+                                ST_X(MIN(point)) || ' ' || ST_Y(MIN(point)) || ' ' || ST_M(MIN(point)) || ')'
+                            )
+                        ELSE
+                            -- 다중 포인트 단순 병합
+                            ST_MakeLine(point ORDER BY time_bucket, point_order)
+                    END as merged_geom_v2
+                FROM track_points
+                GROUP BY sig_src_cd, target_id
+            )
+            SELECT 
+                ST_AsText(merged_geom_v2) as geom_text_v2
+            FROM merged_tracks
+        """;
+        
+        try {
+            // 두 쿼리 실행
+            VesselTrack result = jdbcTemplate.queryForObject(relativeTimeSql, 
+                (rs, rowNum) -> {
+                    try {
+                        return buildDailyTrack(rs, dayBucket);
+                    } catch (Exception e) {
+                        throw new RuntimeException("Failed to build daily track", e);
+                    }
+                },
+                vesselKey.getSigSrcCd(), vesselKey.getTargetId(), 
+                startTime, endTime, dayBucket
+            );
+            
+            // track_geom_v2 추가
+            String geomV2 = jdbcTemplate.queryForObject(unixTimeSql,
+                (rs, rowNum) -> rs.getString("geom_text_v2"),
+                vesselKey.getSigSrcCd(), vesselKey.getTargetId(), 
+                startTime, endTime
+            );
+            
+            // 간소화 적용
+            String simplifiedV2 = TrackSimplificationUtils.simplifyDailyTrack(geomV2);
+            result.setTrackGeomV2(simplifiedV2);
+            
+            return result;
+        } catch (Exception e) {
+            log.error("Failed to process dual-write daily track for vessel {}: {}", 
+                vesselKey.getSigSrcCd() + "_" + vesselKey.getTargetId(), e.getMessage());
+            return null;
+        }
+    }
 }

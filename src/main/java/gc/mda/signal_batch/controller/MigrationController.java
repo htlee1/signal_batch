@@ -84,4 +84,85 @@ public class MigrationController {
             "date", date.toString()
         ));
     }
+    
+    /**
+     * Unix timestamp 검증 및 자동 수정
+     * - track_geom_v2가 비어있으면 채우기
+     * - M값이 잘못되었으면(9시간 차이) 수정
+     */
+    @PostMapping("/fix-unix-timestamps")
+    public ResponseEntity<Map<String, Object>> fixUnixTimestamps(
+            @RequestParam String tableName,  // "5min", "hourly", "daily"
+            @RequestParam @DateTimeFormat(pattern = "yyyy-MM-dd HH:mm:ss") LocalDateTime startTime,
+            @RequestParam @DateTimeFormat(pattern = "yyyy-MM-dd HH:mm:ss") LocalDateTime endTime,
+            @RequestParam(defaultValue = "1000") int batchSize) {
+        
+        try {
+            FixResult result = missingDataFiller.fixUnixTimestamps(tableName, startTime, endTime, batchSize);
+            
+            return ResponseEntity.ok(Map.of(
+                "status", "success",
+                "processed", result.processedCount,
+                "filled", result.filledCount,
+                "corrected", result.correctedCount,
+                "skipped", result.skippedCount,
+                "lastTimeBucket", result.lastTimeBucket != null ? result.lastTimeBucket.toString() : "none",
+                "message", String.format("Processed %d time buckets: filled=%d, corrected=%d, skipped=%d",
+                    result.processedCount, result.filledCount, result.correctedCount, result.skippedCount)
+            ));
+        } catch (Exception e) {
+            log.error("Failed to fix unix timestamps", e);
+            return ResponseEntity.internalServerError().body(Map.of(
+                "status", "error",
+                "message", e.getMessage()
+            ));
+        }
+    }
+    
+    /**
+     * Unix timestamp 검증 (수정 없이 확인만)
+     */
+    @GetMapping("/verify-unix-timestamps")
+    public ResponseEntity<Map<String, Object>> verifyUnixTimestamps(
+            @RequestParam String tableName,
+            @RequestParam @DateTimeFormat(pattern = "yyyy-MM-dd HH:mm:ss") LocalDateTime timeBucket) {
+        
+        try {
+            VerifyResult result = missingDataFiller.verifyUnixTimestamps(tableName, timeBucket);
+            
+            return ResponseEntity.ok(Map.of(
+                "status", "success",
+                "tableName", tableName,
+                "timeBucket", timeBucket.toString(),
+                "totalRecords", result.totalRecords,
+                "emptyV2", result.emptyV2Count,
+                "correctV2", result.correctV2Count,
+                "incorrectV2", result.incorrectV2Count,
+                "samples", result.samples
+            ));
+        } catch (Exception e) {
+            log.error("Failed to verify unix timestamps", e);
+            return ResponseEntity.internalServerError().body(Map.of(
+                "status", "error",
+                "message", e.getMessage()
+            ));
+        }
+    }
+    
+    public static class FixResult {
+        public int processedCount;
+        public int filledCount;
+        public int correctedCount;
+        public int skippedCount;
+        public int createdBuckets;
+        public LocalDateTime lastTimeBucket;
+    }
+    
+    public static class VerifyResult {
+        public int totalRecords;
+        public int emptyV2Count;
+        public int correctV2Count;
+        public int incorrectV2Count;
+        public Map<String, Object>[] samples;
+    }
 }
