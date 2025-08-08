@@ -24,7 +24,8 @@ public class VesselTrack implements Serializable {
     
     // 궤적 정보
     private List<TrackPoint> trackPoints;
-    private String trackGeom;  // PostGIS LineStringM WKT format
+    private String trackGeom;  // PostGIS LineStringM WKT format (relative time)
+    private String trackGeomV2;  // MIGRATION_V2: PostGIS LineStringM WKT format (unix timestamp)
     private BigDecimal distanceNm;  // 이동 거리 (해리)
     private BigDecimal avgSpeed;
     private BigDecimal maxSpeed;

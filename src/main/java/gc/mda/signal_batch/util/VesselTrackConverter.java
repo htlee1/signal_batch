@@ -7,6 +7,8 @@ import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.LineString;
 import org.locationtech.jts.io.ParseException;
 import org.locationtech.jts.io.WKTReader;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -17,15 +19,19 @@ import java.util.List;
  * MergedVesselTrack을 CompactVesselTrack으로 변환하는 유틸리티
  */
 @Slf4j
+@Component
 public class VesselTrackConverter {
     
     private static final WKTReader wktReader = new WKTReader();
     private static final DateTimeFormatter TIMESTAMP_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     
+    @Value("${vessel.batch.m-value.read-column:track_geom}")
+    private String readColumn;
+    
     /**
      * MergedVesselTrack을 CompactVesselTrack으로 변환
      */
-    public static CompactVesselTrack toCompactTrack(MergedVesselTrack merged) {
+    public CompactVesselTrack toCompactTrack(MergedVesselTrack merged) {
         List<double[]> geometry = new ArrayList<>();
         List<String> timestamps = new ArrayList<>();
         List<Double> speeds = new ArrayList<>();
@@ -34,26 +40,40 @@ public class VesselTrackConverter {
             if (merged.getMergedTrackGeom() != null && !merged.getMergedTrackGeom().isEmpty()) {
                 LineString lineString = (LineString) wktReader.read(merged.getMergedTrackGeom());
                 
-                // LineStringM의 각 좌표를 배열로 변환
-                for (Coordinate coord : lineString.getCoordinates()) {
-                    geometry.add(new double[]{coord.x, coord.y});
-                    
-                    // M값(초)을 실제 시간으로 변환
-                    if (merged.getStartTime() != null) {
-                        long timeMillis = merged.getStartTime().atZone(java.time.ZoneId.systemDefault())
-                                .toInstant().toEpochMilli() + (long)(coord.getM() * 1000);
-                        LocalDateTime pointTime = LocalDateTime.ofInstant(
-                                java.time.Instant.ofEpochMilli(timeMillis), 
-                                java.time.ZoneId.systemDefault());
-                        timestamps.add(TIMESTAMP_FORMATTER.format(pointTime));
+                if ("track_geom_v2".equals(readColumn)) {
+                    // MIGRATION_V2: Unix timestamp도 String으로 변환
+                    List<String> unixTimestamps = new ArrayList<>();
+                    for (Coordinate coord : lineString.getCoordinates()) {
+                        geometry.add(new double[]{coord.x, coord.y});
+                        // Unix timestamp를 String으로 저장
+                        unixTimestamps.add(String.valueOf((long)coord.getM()));
+                        speeds.add(merged.getAvgSpeed());
                     }
-                    
-                    // 속도 정보는 평균속도로 대체 (개별 속도 정보가 없으므로)
-                    speeds.add(merged.getAvgSpeed());
+                    timestamps = unixTimestamps;
+                } else {
+                    // 기존: 문자열 timestamp
+                    List<String> stringTimestamps = new ArrayList<>();
+                    for (Coordinate coord : lineString.getCoordinates()) {
+                        geometry.add(new double[]{coord.x, coord.y});
+                        
+                        if (merged.getStartTime() != null) {
+                            long timeMillis = merged.getStartTime().atZone(java.time.ZoneId.systemDefault())
+                                    .toInstant().toEpochMilli() + (long)(coord.getM() * 1000);
+                            LocalDateTime pointTime = LocalDateTime.ofInstant(
+                                    java.time.Instant.ofEpochMilli(timeMillis), 
+                                    java.time.ZoneId.systemDefault());
+                            stringTimestamps.add(TIMESTAMP_FORMATTER.format(pointTime));
+                        }
+                        speeds.add(merged.getAvgSpeed());
+                    }
+                    timestamps = stringTimestamps;
                 }
+            } else {
+                timestamps = new ArrayList<>();
             }
         } catch (ParseException e) {
             log.error("Error parsing merged track geometry: {}", e.getMessage());
+            timestamps = new ArrayList<>();
         }
         
         return CompactVesselTrack.builder()
@@ -65,7 +85,7 @@ public class VesselTrackConverter {
                 .speeds(speeds)
                 .totalDistance(merged.getTotalDistanceNm())
                 .avgSpeed(merged.getAvgSpeed())
-                .maxSpeed(merged.getAvgSpeed()) // maxSpeed 정보가 없으면 avgSpeed 사용
+                .maxSpeed(merged.getAvgSpeed())
                 .pointCount(geometry.size())
                 .build();
     }
@@ -73,7 +93,7 @@ public class VesselTrackConverter {
     /**
      * MergedVesselTrack 리스트를 CompactVesselTrack 리스트로 변환
      */
-    public static List<CompactVesselTrack> toCompactTracks(List<MergedVesselTrack> mergedTracks) {
+    public List<CompactVesselTrack> toCompactTracks(List<MergedVesselTrack> mergedTracks) {
         List<CompactVesselTrack> compactTracks = new ArrayList<>();
         for (MergedVesselTrack merged : mergedTracks) {
             compactTracks.add(toCompactTrack(merged));

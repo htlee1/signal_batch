@@ -1,5 +1,7 @@
 package gc.mda.signal_batch.dto;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -15,6 +17,7 @@ import java.util.List;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
+@JsonInclude(JsonInclude.Include.NON_NULL)
 public class CompactVesselTrack {
     private String vesselId;           // sig_src_cd + "_" + target_id
     private String sigSrcCd;
@@ -22,7 +25,11 @@ public class CompactVesselTrack {
     
     // 궤적 데이터 (배열 형태)
     private List<double[]> geometry;   // [[lon, lat], ...]
-    private List<String> timestamps;   // ["2025-07-29 07:05:00", ...]
+    
+    // MIGRATION_V2: 호환성을 위해 모두 String으로 처리
+    @JsonProperty("timestamps")
+    private List<String> timestamps;   // String 리스트 (Unix timestamp도 String으로 변환)
+    
     private List<Double> speeds;       // [12.5, 13.2, ...]
     
     // 메타데이터

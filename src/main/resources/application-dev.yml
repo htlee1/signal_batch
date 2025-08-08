@@ -177,6 +177,13 @@ vessel:  # spring 하위가 아닌 최상위 레벨
       haegu:
         cache-enabled: true
         cache-size: 2000
+
+
+    # MIGRATION_V2: Unix Timestamp 전환 설정
+    m-value:
+      format: relative        # relative | unix_timestamp
+      dual-write: true       # 양쪽 컬럼 모두 저장
+      read-column: track_geom  # track_geom | track_geom_v2
     
     # 비정상 궤적 검출 설정 (개선됨)
     abnormal-detection:

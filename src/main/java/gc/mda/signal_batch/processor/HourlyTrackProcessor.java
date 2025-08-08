@@ -5,6 +5,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.batch.item.ItemProcessor;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.beans.factory.annotation.Value;
 
 import javax.sql.DataSource;
 import java.math.BigDecimal;
@@ -23,6 +24,15 @@ public class HourlyTrackProcessor implements ItemProcessor<VesselTrack.VesselKey
     private final JdbcTemplate jdbcTemplate;
     private static final DateTimeFormatter TIMESTAMP_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     
+    @Value("${vessel.batch.m-value.format:relative}")
+    private String mValueFormat;
+    
+    @Value("${vessel.batch.m-value.dual-write:false}")
+    private boolean dualWrite;
+    
+    @Value("${vessel.batch.m-value.read-column:track_geom}")
+    private String readColumn;
+    
     @Override
     public VesselTrack process(VesselTrack.VesselKey vesselKey) throws Exception {
         LocalDateTime hourBucket = vesselKey.getTimeBucket()
@@ -30,8 +40,9 @@ public class HourlyTrackProcessor implements ItemProcessor<VesselTrack.VesselKey
                 .withSecond(0)
                 .withNano(0);
         
-        // 5분 데이터 병합 쿼리
-        String sql = """
+        // 5분 데이터 병합 쿼리 - MIGRATION_V2: 동적 컬럼 선택
+        String geomColumn = readColumn; // track_geom 또는 track_geom_v2
+        String sql = String.format("""
             WITH ordered_tracks AS (
                 SELECT *
                 FROM signal.t_vessel_tracks_5min
@@ -53,9 +64,9 @@ public class HourlyTrackProcessor implements ItemProcessor<VesselTrack.VesselKey
                     o.sig_src_cd,
                     o.target_id,
                     o.time_bucket,
-                    (ST_DumpPoints(o.track_geom)).geom as point,
-                    (ST_DumpPoints(o.track_geom)).path[1] as point_order,
-                    ST_M((ST_DumpPoints(o.track_geom)).geom) as original_m,
+                    (ST_DumpPoints(o.%s)).geom as point,
+                    (ST_DumpPoints(o.%s)).path[1] as point_order,
+                    ST_M((ST_DumpPoints(o.%s)).geom) as original_m,
                     (o.start_position->>'time')::timestamp as track_start_time
                 FROM ordered_tracks o
             ),
@@ -125,7 +136,7 @@ public class HourlyTrackProcessor implements ItemProcessor<VesselTrack.VesselKey
                 end_pos,
                 ST_AsText(merged_geom) as geom_text 
             FROM calculated_tracks
-        """;
+        """, geomColumn, geomColumn, geomColumn);
         
         LocalDateTime startTime = hourBucket;
         LocalDateTime endTime = hourBucket.plusHours(1);
@@ -181,18 +192,31 @@ public class HourlyTrackProcessor implements ItemProcessor<VesselTrack.VesselKey
                 stats.originalPoints, stats.simplifiedPoints, (int)stats.reductionRate);
         }
         
-        return VesselTrack.builder()
+        VesselTrack.VesselTrackBuilder builder = VesselTrack.builder()
                 .sigSrcCd(rs.getString("sig_src_cd"))
                 .targetId(rs.getString("target_id"))
                 .timeBucket(hourBucket)
-                .trackGeom(simplifiedLineStringM)
                 .distanceNm(rs.getBigDecimal("total_distance"))
                 .avgSpeed(rs.getBigDecimal("avg_speed"))
                 .maxSpeed(rs.getBigDecimal("max_speed"))
                 .pointCount(rs.getInt("total_points"))
                 .startPosition(startPos)
-                .endPosition(endPos)
-                .build();
+                .endPosition(endPos);
+        
+        // MIGRATION_V2: dual-write 지원
+        if (dualWrite) {
+            // 양쪽 컬럼에 모두 저장
+            builder.trackGeom(simplifiedLineStringM);
+            builder.trackGeomV2(simplifiedLineStringM);
+        } else if ("track_geom_v2".equals(readColumn)) {
+            // track_geom_v2만 사용
+            builder.trackGeomV2(simplifiedLineStringM);
+        } else {
+            // track_geom만 사용 (기본)
+            builder.trackGeom(simplifiedLineStringM);
+        }
+        
+        return builder.build();
     }
     
     private VesselTrack.TrackPosition parseTrackPosition(String json) {
