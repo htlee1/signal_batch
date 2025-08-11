@@ -74,8 +74,7 @@ public class ChunkedTrackStreamingService {
     private final Map<String, BackpressureMetrics> queryMetrics = new ConcurrentHashMap<>();
     private volatile int currentChunkSizeKB = MAX_MESSAGE_SIZE_KB;
     
-    @Value("${vessel.batch.m-value.read-column:track_geom}")
-    private String readColumn;  // MIGRATION_V2: track_geom or track_geom_v2
+    // track_geom_v2 고정 사용
 
     public ChunkedTrackStreamingService(
             @Qualifier("queryJdbcTemplate") JdbcTemplate queryJdbcTemplate,
@@ -331,29 +330,16 @@ public class ChunkedTrackStreamingService {
                                 Coordinate coord = lineString.getCoordinateN(i);
                                 geometry.add(new double[]{coord.x, coord.y});
 
-                                // MIGRATION_V2: M값 형식에 따른 처리
-                                if ("track_geom_v2".equals(readColumn)) {
-                                    // Unix timestamp (초 단위) - String으로 저장
-                                    long unixTimestamp = (long)coord.getM();
-                                    timestamps.add(String.valueOf(unixTimestamp));
-                                } else {
-                                    // 상대시간 (초) - 기존 형식
-                                    long timeMillis = baseTime.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli() + (long)(coord.getM() * 1000);
-                                    timestamps.add(TIMESTAMP_FORMATTER.format(
-                                            new java.sql.Timestamp(timeMillis).toLocalDateTime()));
-                                }
+                                // Unix timestamp (초 단위) - String으로 저장
+                                long unixTimestamp = (long)coord.getM();
+                                timestamps.add(String.valueOf(unixTimestamp));
 
                                 // 속도 계산 (두 점 사이의 거리와 시간차를 이용)
                                 double speed = 0.0;
                                 long currentTimeMillis;
                                 
-                                if ("track_geom_v2".equals(readColumn)) {
-                                    // Unix timestamp (초 단위를 밀리초로 변환)
-                                    currentTimeMillis = (long)coord.getM() * 1000;
-                                } else {
-                                    // 상대시간
-                                    currentTimeMillis = baseTime.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli() + (long)(coord.getM() * 1000);
-                                }
+                                // Unix timestamp (초 단위를 밀리초로 변환)
+                                currentTimeMillis = (long)coord.getM() * 1000;
                                 
                                 if (prevCoord != null && i > 0) {
                                     double distance = calculateDistance(prevCoord, coord); // 해리(nm)
@@ -1368,15 +1354,14 @@ public class ChunkedTrackStreamingService {
         StringBuilder sql = new StringBuilder();
         sql.append("SELECT sig_src_cd, target_id, time_bucket, ");
 
-        // MIGRATION_V2: 동적 컬럼 선택
-        String geomColumn = readColumn; // track_geom or track_geom_v2
+        // track_geom_v2 고정 사용
         
         // 간소화 적용
         if (simplificationLevel != SimplificationLevel.NONE && simplificationLevel.getTolerance() > 0) {
-            sql.append("ST_AsText(ST_Simplify(").append(geomColumn).append(", ").append(simplificationLevel.getTolerance())
+            sql.append("ST_AsText(ST_Simplify(track_geom_v2, ").append(simplificationLevel.getTolerance())
                     .append(")) as track_geom, ");
         } else {
-            sql.append("ST_AsText(").append(geomColumn).append(") as track_geom, ");
+            sql.append("ST_AsText(track_geom_v2) as track_geom, ");
         }
 
         sql.append("distance_nm, avg_speed, max_speed, point_count");
@@ -1394,7 +1379,7 @@ public class ChunkedTrackStreamingService {
 
         // Viewport 필터 - 파라미터 바인딩 사용
         if (request.getViewport() != null) {
-            sql.append("AND ST_Intersects(").append(geomColumn).append(", ST_MakeEnvelope(?, ?, ?, ?, 4326)) ");
+            sql.append("AND ST_Intersects(track_geom_v2, ST_MakeEnvelope(?, ?, ?, ?, 4326)) ");
         }
 
         // 거리/속도 필터

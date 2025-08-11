@@ -25,8 +25,7 @@ public class VesselTrackConverter {
     private static final WKTReader wktReader = new WKTReader();
     private static final DateTimeFormatter TIMESTAMP_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     
-    @Value("${vessel.batch.m-value.read-column:track_geom}")
-    private String readColumn;
+    // track_geom_v2 고정 사용
     
     /**
      * MergedVesselTrack을 CompactVesselTrack으로 변환
@@ -40,34 +39,15 @@ public class VesselTrackConverter {
             if (merged.getMergedTrackGeom() != null && !merged.getMergedTrackGeom().isEmpty()) {
                 LineString lineString = (LineString) wktReader.read(merged.getMergedTrackGeom());
                 
-                if ("track_geom_v2".equals(readColumn)) {
-                    // MIGRATION_V2: Unix timestamp도 String으로 변환
-                    List<String> unixTimestamps = new ArrayList<>();
-                    for (Coordinate coord : lineString.getCoordinates()) {
-                        geometry.add(new double[]{coord.x, coord.y});
-                        // Unix timestamp를 String으로 저장
-                        unixTimestamps.add(String.valueOf((long)coord.getM()));
-                        speeds.add(merged.getAvgSpeed());
-                    }
-                    timestamps = unixTimestamps;
-                } else {
-                    // 기존: 문자열 timestamp
-                    List<String> stringTimestamps = new ArrayList<>();
-                    for (Coordinate coord : lineString.getCoordinates()) {
-                        geometry.add(new double[]{coord.x, coord.y});
-                        
-                        if (merged.getStartTime() != null) {
-                            long timeMillis = merged.getStartTime().atZone(java.time.ZoneId.systemDefault())
-                                    .toInstant().toEpochMilli() + (long)(coord.getM() * 1000);
-                            LocalDateTime pointTime = LocalDateTime.ofInstant(
-                                    java.time.Instant.ofEpochMilli(timeMillis), 
-                                    java.time.ZoneId.systemDefault());
-                            stringTimestamps.add(TIMESTAMP_FORMATTER.format(pointTime));
-                        }
-                        speeds.add(merged.getAvgSpeed());
-                    }
-                    timestamps = stringTimestamps;
+                // Unix timestamp를 String으로 변환
+                List<String> unixTimestamps = new ArrayList<>();
+                for (Coordinate coord : lineString.getCoordinates()) {
+                    geometry.add(new double[]{coord.x, coord.y});
+                    // Unix timestamp를 String으로 저장
+                    unixTimestamps.add(String.valueOf((long)coord.getM()));
+                    speeds.add(merged.getAvgSpeed());
                 }
+                timestamps = unixTimestamps;
             } else {
                 timestamps = new ArrayList<>();
             }

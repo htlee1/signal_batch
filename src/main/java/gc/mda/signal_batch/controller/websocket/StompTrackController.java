@@ -49,6 +49,7 @@ public class StompTrackController {
         
         log.info("Starting track query - ID: {}, Session: {}, User: {}", 
                 queryId, sessionId, userId);
+        log.info("Request info - {}", request);
         
         // 세션 정보 저장
         QuerySession session = new QuerySession(queryId, sessionId, userId);

@@ -40,9 +40,7 @@ public class StompTrackStreamingService {
     private final TrackStreamingMetrics metrics;
 
     private final VesselTrackFilter vesselTrackFilter;
-    
-    @Value("${vessel.batch.m-value.read-column:track_geom}")
-    private String readColumn;  // MIGRATION_V2: track_geom or track_geom_v2
+
 
     // 활성 쿼리 관리
     private final Map<String, QueryContext> activeQueries = new ConcurrentHashMap<>();
@@ -719,14 +717,13 @@ public class StompTrackStreamingService {
         StringBuilder sql = new StringBuilder();
 
         // 단순화 옵션 적용
-        String geomColumn = readColumn; // MIGRATION_V2: 동적 컴럼 선택
         if (simplificationLevel != SimplificationLevel.NONE && simplificationLevel.getTolerance() > 0) {
             sql.append("SELECT sig_src_cd, target_id, ");
-            sql.append("ST_AsText(ST_Simplify(").append(geomColumn).append(", ").append(simplificationLevel.getTolerance())
+            sql.append("ST_AsText(ST_Simplify(track_geom_v2, ").append(simplificationLevel.getTolerance())
                     .append(")) as track_geom_wkt, ");
         } else {
             sql.append("SELECT sig_src_cd, target_id, ");
-            sql.append("ST_AsText(").append(geomColumn).append(") as track_geom_wkt, ");
+            sql.append("ST_AsText(track_geom_v2) as track_geom_wkt, ");
         }
 
         sql.append("distance_nm, avg_speed, max_speed, point_count, ");
@@ -737,7 +734,7 @@ public class StompTrackStreamingService {
 
         // Viewport 필터
         if (request.getViewport() != null) {
-            sql.append("AND ST_Intersects(").append(geomColumn).append(", ST_MakeEnvelope(?, ?, ?, ?, 4326)) ");
+            sql.append("AND ST_Intersects(track_geom_v2, ST_MakeEnvelope(?, ?, ?, ?, 4326)) ");
         }
 
         // 해구 필터 (JOIN 대신 IN 사용으로 성능 개선)
@@ -782,14 +779,13 @@ public class StompTrackStreamingService {
 
     private String buildCountQuery(TrackQueryRequest request, TableStrategy strategy, Set<String> filteredVessels) {
         StringBuilder sql = new StringBuilder();
-        String geomColumn = readColumn; // MIGRATION_V2
         sql.append("SELECT COUNT(*) ");
         sql.append("FROM ").append(strategy.getTableName()).append(" ");
         sql.append("WHERE time_bucket >= ? AND time_bucket < ? ");
 
         // 필터 조건 추가 (buildStreamingQuery와 동일)
         if (request.getViewport() != null) {
-            sql.append("AND ST_Intersects(").append(geomColumn).append(", ST_MakeEnvelope(?, ?, ?, ?, 4326)) ");
+            sql.append("AND ST_Intersects(track_geom_v2, ST_MakeEnvelope(?, ?, ?, ?, 4326)) ");
         }
 
         if (request.getHaeguNumbers() != null && !request.getHaeguNumbers().isEmpty()) {

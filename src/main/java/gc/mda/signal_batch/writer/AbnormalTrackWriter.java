@@ -38,14 +38,7 @@ public class AbnormalTrackWriter implements ItemWriter<AbnormalDetectionResult> 
     @Qualifier("queryJdbcTemplate")
     private JdbcTemplate jdbcTemplate;
     
-    @Value("${vessel.batch.m-value.format:relative}")
-    private String mValueFormat;
-    
-    @Value("${vessel.batch.m-value.dual-write:false}")
-    private boolean dualWrite;
-    
-    @Value("${vessel.batch.m-value.read-column:track_geom}")
-    private String readColumn;
+    // Unix timestamp 전용 - 설정 제거
     
     private final ObjectMapper objectMapper = new ObjectMapper()
             .registerModule(new JavaTimeModule())
@@ -89,9 +82,8 @@ public class AbnormalTrackWriter implements ItemWriter<AbnormalDetectionResult> 
     }
     
     private void saveAbnormalTracks(List<AbnormalDetectionResult> results) {
-        // 설정에 따른 컬럼 선택
-        boolean useV2 = "track_geom_v2".equals(readColumn) || "unix".equals(mValueFormat);
-        String geomColumn = useV2 ? "track_geom_v2" : "track_geom";
+        // track_geom_v2만 사용
+        String geomColumn = "track_geom_v2";
         
         String sql = String.format("""
             INSERT INTO signal.t_abnormal_tracks (
@@ -136,15 +128,8 @@ public class AbnormalTrackWriter implements ItemWriter<AbnormalDetectionResult> 
             
             try {
                 String reasonJson = objectMapper.writeValueAsString(abnormalReason);
-                // VesselTrack에서 적절한 geometry 선택
-                String geomWkt = null;
-                if (useV2) {
-                    // track_geom_v2 우선 사용
-                    geomWkt = track.getTrackGeomV2() != null ? track.getTrackGeomV2() : track.getTrackGeom();
-                } else {
-                    // track_geom 우선 사용
-                    geomWkt = track.getTrackGeom() != null ? track.getTrackGeom() : track.getTrackGeomV2();
-                }
+                // track_geom_v2만 사용
+                String geomWkt = track.getTrackGeomV2();
                 
                 if (geomWkt == null) {
                     log.warn("비정상 궤적에 geometry 데이터 없음: vessel={}", track.getVesselKey());

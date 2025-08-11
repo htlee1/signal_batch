@@ -4,14 +4,12 @@ import gc.mda.signal_batch.common.AreaBoundaryCache;
 import gc.mda.signal_batch.model.VesselData;
 import gc.mda.signal_batch.model.VesselTrack;
 import gc.mda.signal_batch.util.HaeguGeoUtils;
-import gc.mda.signal_batch.migration.unix_timestamp.MValueStrategy;
+import gc.mda.signal_batch.migration.unix_timestamp.strategy.UnixTimestampStrategy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.batch.item.ItemProcessor;
 import org.springframework.stereotype.Component;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Qualifier;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -27,18 +25,7 @@ public class VesselTrackProcessor implements ItemProcessor<List<VesselData>, Lis
     private final AreaBoundaryCache areaBoundaryCache; // 캐시 활용
     
     @Autowired
-    @Qualifier("relativeTimeStrategy")
-    private MValueStrategy relativeStrategy;
-    
-    @Autowired
-    @Qualifier("unixTimestampStrategy")
-    private MValueStrategy unixStrategy;
-    
-    @Value("${vessel.batch.m-value.format:relative}")
-    private String mValueFormat;
-    
-    @Value("${vessel.batch.m-value.dual-write:false}")
-    private boolean dualWrite;
+    private UnixTimestampStrategy unixStrategy;
 
     @Override
     public List<VesselTrack> process(List<VesselData> items) throws Exception {
@@ -112,20 +99,8 @@ public class VesselTrackProcessor implements ItemProcessor<List<VesselData>, Lis
         // 속도 통계
         calculateSpeedStatistics(track, vesselDataList);
 
-        // PostGIS LineStringM 생성 (MIGRATION_V2: 전략 패턴 적용)
-        if (dualWrite) {
-            // Dual Write 모드: 양쪽 모두 저장
-            track.setTrackGeom(relativeStrategy.buildLineStringM(trackPoints));
-            track.setTrackGeomV2(unixStrategy.buildLineStringM(trackPoints));
-            // Dual-write mode: Generated both relative and unix LineStringM
-        } else if ("unix".equals(mValueFormat)) {
-            // Unix 모드: v2만 저장
-            track.setTrackGeomV2(unixStrategy.buildLineStringM(trackPoints));
-            // Unix mode: Generated unix LineStringM only
-        } else {
-            // 기존 모드: v1만 저장
-            track.setTrackGeom(relativeStrategy.buildLineStringM(trackPoints));
-        }
+        // PostGIS LineStringM 생성 (Unix timestamp만 사용)
+        track.setTrackGeomV2(unixStrategy.buildLineStringM(trackPoints));
 
         // 해구 정보 추가
         addHaeguInfo(track, first);
@@ -172,13 +147,11 @@ public class VesselTrackProcessor implements ItemProcessor<List<VesselData>, Lis
     }
     
     /**
-     * LineStringM의 M값으로부터 실제 경과 시간 계산
+     * LineStringM의 M값으로부터 실제 경과 시간 계산 (Unix timestamp 전용)
      */
     private long calculateDurationFromMValues(VesselTrack track) {
-        // WKT에서 M값 추출
-        String wkt = track.getTrackGeomV2() != null ? track.getTrackGeomV2() : track.getTrackGeom();
+        String wkt = track.getTrackGeomV2();
         if (wkt == null || !wkt.contains("LINESTRING M")) {
-            // M값이 없으면 기존 방식 폴백
             return java.time.Duration.between(
                     track.getStartPosition().getTime(),
                     track.getEndPosition().getTime()
@@ -186,13 +159,11 @@ public class VesselTrackProcessor implements ItemProcessor<List<VesselData>, Lis
         }
         
         try {
-            // "LINESTRING M(x y m, x y m, ...)" 파싱
             String coords = wkt.substring(wkt.indexOf('(') + 1, wkt.lastIndexOf(')'));
             String[] points = coords.split(",");
             
             if (points.length == 0) return 0;
             
-            // 첫 포인트와 마지막 포인트의 M값 추출
             String[] firstPoint = points[0].trim().split(" ");
             String[] lastPoint = points[points.length - 1].trim().split(" ");
             
@@ -201,14 +172,8 @@ public class VesselTrackProcessor implements ItemProcessor<List<VesselData>, Lis
             double firstM = Double.parseDouble(firstPoint[2]);
             double lastM = Double.parseDouble(lastPoint[2]);
             
-            // Unix timestamp vs 상대시간 구분
-            if ("unix".equals(mValueFormat) || track.getTrackGeomV2() != null) {
-                // Unix timestamp: 차이가 경과 시간(초)
-                return (long)(lastM - firstM);
-            } else {
-                // 상대시간: 마지막 M값이 경과 시간(초)
-                return (long)lastM;
-            }
+            // Unix timestamp: 차이가 경과 시간(초)
+            return (long)(lastM - firstM);
         } catch (Exception e) {
             log.warn("M값 파싱 실패, 기존 방식 사용: {}", e.getMessage());
             return java.time.Duration.between(
@@ -218,12 +183,7 @@ public class VesselTrackProcessor implements ItemProcessor<List<VesselData>, Lis
         }
     }
 
-    // MIGRATION_V2: 기존 메서드는 전략 패턴으로 대체됨
-    @Deprecated
-    private String buildLineStringM(List<VesselTrack.TrackPoint> trackPoints) {
-        // 전략 패턴 사용으로 인해 더 이상 직접 사용하지 않음
-        return relativeStrategy.buildLineStringM(trackPoints);
-    }
+
 
     private void addHaeguInfo(VesselTrack track, VesselData vesselData) {
         HaeguGeoUtils.HaeguTileInfo haeguInfo = haeguGeoUtils.getHaeguTileInfo(vesselData.getLat(), vesselData.getLon(), 0);
