@@ -7,6 +7,7 @@ import gc.mda.signal_batch.dto.AbnormalTrackStatsResponse;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,6 +30,9 @@ public class AbnormalTrackService {
     
     private final JdbcTemplate jdbcTemplate;
     
+    @Value("${vessel.batch.m-value.read-column:track_geom}")
+    private String readColumn;
+    
     public AbnormalTrackService(@Qualifier("queryJdbcTemplate") JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
     }
@@ -36,10 +40,19 @@ public class AbnormalTrackService {
     private final ObjectMapper objectMapper = new ObjectMapper();
     
     /**
+     * 설정에 따른 geometry 컬럼 선택
+     */
+    private String getGeomColumn() {
+        // t_abnormal_tracks 테이블의 컬럼명 반환
+        return "track_geom_v2".equals(readColumn) ? "track_geom_v2" : "track_geom";
+    }
+    
+    /**
      * 특정 시간 이후의 비정상 궤적 조회
      */
     public List<AbnormalTrackResponse> getAbnormalTracksSince(LocalDateTime since) {
-        String sql = """
+        String geomCol = getGeomColumn();
+        String sql = String.format("""
             SELECT 
                 id,
                 sig_src_cd,
@@ -60,19 +73,20 @@ public class AbnormalTrackService {
                     'coordinates', (
                         SELECT jsonb_agg(
                             jsonb_build_array(
-                                ST_X(ST_PointN(track_geom, point_num)),
-                                ST_Y(ST_PointN(track_geom, point_num)),
-                                ST_M(ST_PointN(track_geom, point_num))
+                                ST_X(ST_PointN(%s, point_num)),
+                                ST_Y(ST_PointN(%s, point_num)),
+                                ST_M(ST_PointN(%s, point_num))
                             )
                         )
-                        FROM generate_series(1, ST_NPoints(track_geom)) AS point_num
+                        FROM generate_series(1, ST_NPoints(%s)) AS point_num
                     )
                 )::text as track_geojson
             FROM signal.t_abnormal_tracks
             WHERE detected_at >= ?
+                AND %s IS NOT NULL
             ORDER BY detected_at DESC
             LIMIT 1000
-        """;
+        """, geomCol, geomCol, geomCol, geomCol, geomCol);
         
         return jdbcTemplate.query(sql, (rs, rowNum) -> {
             Map<String, Object> abnormalReason = null;
@@ -271,6 +285,9 @@ public class AbnormalTrackService {
         String tableName = tableType.equals("hourly") ? 
             "t_vessel_tracks_hourly" : "t_vessel_tracks_daily";
         
+        // 소스 테이블에서도 동일한 컬럼 사용
+        String sourceGeomCol = readColumn;
+        
         String sql = String.format("""
             SELECT 
                 sig_src_cd,
@@ -287,12 +304,12 @@ public class AbnormalTrackService {
                     'coordinates', (
                         SELECT jsonb_agg(
                             jsonb_build_array(
-                                ST_X(ST_PointN(track_geom, point_num)),
-                                ST_Y(ST_PointN(track_geom, point_num)),
-                                ST_M(ST_PointN(track_geom, point_num))
+                                ST_X(ST_PointN(%s, point_num)),
+                                ST_Y(ST_PointN(%s, point_num)),
+                                ST_M(ST_PointN(%s, point_num))
                             )
                         )
-                        FROM generate_series(1, ST_NPoints(track_geom)) AS point_num
+                        FROM generate_series(1, ST_NPoints(%s)) AS point_num
                     )
                 )::text as track_geojson,
                 start_position,
@@ -300,11 +317,12 @@ public class AbnormalTrackService {
             FROM signal.%s
             WHERE time_bucket >= ?
               AND time_bucket < ?
+              AND %s IS NOT NULL
               AND (? = 0 OR distance_nm >= ?)
               AND (? = 0 OR avg_speed >= ?)
             ORDER BY time_bucket DESC, distance_nm DESC
             LIMIT 500
-        """, tableName);
+        """, sourceGeomCol, sourceGeomCol, sourceGeomCol, sourceGeomCol, tableName, sourceGeomCol);
         
         return jdbcTemplate.query(sql, (rs, rowNum) -> {
             // 비정상 유형 결정
@@ -378,21 +396,25 @@ public class AbnormalTrackService {
         for (TrackIdentifier track : tracks) {
             try {
                 // 1. t_abnormal_tracks로 복사
+                // 소스와 타겟에서 동일한 컬럼 사용
+                String geomCol = getGeomColumn();
+                String sourceGeomCol = readColumn;
+                
                 String insertSql = String.format("""
                     INSERT INTO signal.t_abnormal_tracks (
                         sig_src_cd, target_id, time_bucket, abnormal_type, abnormal_reason,
-                        distance_nm, avg_speed, max_speed, point_count, track_geom,
+                        distance_nm, avg_speed, max_speed, point_count, %s,
                         source_table, detected_at
                     )
                     SELECT 
                         sig_src_cd, target_id, time_bucket, ?, ?::jsonb,
-                        distance_nm, avg_speed, max_speed, point_count, track_geom,
+                        distance_nm, avg_speed, max_speed, point_count, %s,
                         ?, NOW()
                     FROM signal.%s
                     WHERE sig_src_cd = ?
                       AND target_id = ?
                       AND time_bucket = ?
-                """, sourceTable);
+                """, geomCol, sourceGeomCol, sourceTable);
                 
                 int inserted = jdbcTemplate.update(insertSql, 
                     abnormalType,

@@ -115,10 +115,24 @@ public class DailyTrackProcessor implements ItemProcessor<VesselTrack.VesselKey,
                     *,
                     -- ST_Length를 사용하여 실제 거리 계산 (미터 -> 해리 변환: / 1852)
                     ST_Length(merged_geom::geography) / 1852.0 as total_distance,
-                    -- 시간 차이 계산을 위한 JSON 파싱
-                    EXTRACT(EPOCH FROM 
-                        (end_pos->>'time')::timestamp - (start_pos->>'time')::timestamp
-                    ) as time_diff_seconds
+                    -- M값 기반 정확한 시간 차이 계산
+                    CASE
+                        WHEN ST_NPoints(merged_geom) > 0 THEN
+                            -- Unix timestamp면 차이, 상대시간이면 마지막 M값
+                            CASE WHEN '%s' = 'track_geom_v2' THEN
+                                -- Unix timestamp: 마지막 M - 첫 M
+                                ST_M(ST_PointN(merged_geom, ST_NPoints(merged_geom))) - 
+                                ST_M(ST_PointN(merged_geom, 1))
+                            ELSE
+                                -- 상대시간: 마지막 M값이 경과 시간
+                                ST_M(ST_PointN(merged_geom, ST_NPoints(merged_geom)))
+                            END
+                        ELSE
+                            -- 폴백: 기존 방식
+                            EXTRACT(EPOCH FROM 
+                                (end_pos->>'time')::timestamp - (start_pos->>'time')::timestamp
+                            )
+                    END as time_diff_seconds
                 FROM merged_tracks
             )
             SELECT 
@@ -141,7 +155,7 @@ public class DailyTrackProcessor implements ItemProcessor<VesselTrack.VesselKey,
                 end_pos,
                 ST_AsText(merged_geom) as geom_text
             FROM calculated_tracks
-        """, geomColumn, geomColumn, geomColumn);
+        """, geomColumn, geomColumn, geomColumn, readColumn);
         
         LocalDateTime startTime = dayBucket;
         LocalDateTime endTime = dayBucket.plusDays(1);
@@ -315,9 +329,15 @@ public class DailyTrackProcessor implements ItemProcessor<VesselTrack.VesselKey,
                 SELECT 
                     *,
                     ST_Length(merged_geom::geography) / 1852.0 as total_distance,
-                    EXTRACT(EPOCH FROM 
-                        (end_pos->>'time')::timestamp - (start_pos->>'time')::timestamp
-                    ) as time_diff_seconds
+                    -- M값 기반 시간 계산 (상대시간)
+                    CASE
+                        WHEN ST_NPoints(merged_geom) > 0 THEN
+                            ST_M(ST_PointN(merged_geom, ST_NPoints(merged_geom)))
+                        ELSE
+                            EXTRACT(EPOCH FROM 
+                                (end_pos->>'time')::timestamp - (start_pos->>'time')::timestamp
+                            )
+                    END as time_diff_seconds
                 FROM merged_tracks
             )
             SELECT 
@@ -400,16 +420,24 @@ public class DailyTrackProcessor implements ItemProcessor<VesselTrack.VesselKey,
                 startTime, endTime, dayBucket
             );
             
-            // track_geom_v2 추가
-            String geomV2 = jdbcTemplate.queryForObject(unixTimeSql,
-                (rs, rowNum) -> rs.getString("geom_text_v2"),
-                vesselKey.getSigSrcCd(), vesselKey.getTargetId(), 
-                startTime, endTime
-            );
+            // track_geom_v2 추가 (없을 수 있음)
+            String geomV2 = null;
+            try {
+                geomV2 = jdbcTemplate.queryForObject(unixTimeSql,
+                    (rs, rowNum) -> rs.getString("geom_text_v2"),
+                    vesselKey.getSigSrcCd(), vesselKey.getTargetId(), 
+                    startTime, endTime
+                );
+            } catch (Exception e) {
+                log.debug("No track_geom_v2 data for vessel {}", 
+                    vesselKey.getSigSrcCd() + "_" + vesselKey.getTargetId());
+            }
             
-            // 간소화 적용
-            String simplifiedV2 = TrackSimplificationUtils.simplifyDailyTrack(geomV2);
-            result.setTrackGeomV2(simplifiedV2);
+            // 간소화 적용 (데이터가 있는 경우만)
+            if (geomV2 != null) {
+                String simplifiedV2 = TrackSimplificationUtils.simplifyDailyTrack(geomV2);
+                result.setTrackGeomV2(simplifiedV2);
+            }
             
             return result;
         } catch (Exception e) {

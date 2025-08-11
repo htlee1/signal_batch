@@ -149,13 +149,11 @@ public class VesselTrackProcessor implements ItemProcessor<List<VesselData>, Lis
                 .orElse(BigDecimal.ZERO);
         track.setMaxSpeed(maxSpeed);
 
-        // 2. 평균 속도는 실제 이동거리와 시간 기반으로 계산
+        // 2. 평균 속도는 실제 이동거리와 M값 기반 시간으로 계산
         if (track.getDistanceNm() != null && track.getDistanceNm().compareTo(new BigDecimal("0.1")) > 0) {
             // 거리가 0.1nm 이상일 때만 속도 계산
-            long totalSeconds = java.time.Duration.between(
-                    track.getStartPosition().getTime(),
-                    track.getEndPosition().getTime()
-            ).getSeconds();
+            // M값 기반 정확한 시간 계산
+            long totalSeconds = calculateDurationFromMValues(track);
 
             if (totalSeconds > 0) {
                 // 거리(해리) / 시간(시간) = 속도(노트)
@@ -170,6 +168,53 @@ public class VesselTrackProcessor implements ItemProcessor<List<VesselData>, Lis
         } else {
             // 거리가 0.1nm 미만이면 정박 중으로 간주
             track.setAvgSpeed(BigDecimal.ZERO);
+        }
+    }
+    
+    /**
+     * LineStringM의 M값으로부터 실제 경과 시간 계산
+     */
+    private long calculateDurationFromMValues(VesselTrack track) {
+        // WKT에서 M값 추출
+        String wkt = track.getTrackGeomV2() != null ? track.getTrackGeomV2() : track.getTrackGeom();
+        if (wkt == null || !wkt.contains("LINESTRING M")) {
+            // M값이 없으면 기존 방식 폴백
+            return java.time.Duration.between(
+                    track.getStartPosition().getTime(),
+                    track.getEndPosition().getTime()
+            ).getSeconds();
+        }
+        
+        try {
+            // "LINESTRING M(x y m, x y m, ...)" 파싱
+            String coords = wkt.substring(wkt.indexOf('(') + 1, wkt.lastIndexOf(')'));
+            String[] points = coords.split(",");
+            
+            if (points.length == 0) return 0;
+            
+            // 첫 포인트와 마지막 포인트의 M값 추출
+            String[] firstPoint = points[0].trim().split(" ");
+            String[] lastPoint = points[points.length - 1].trim().split(" ");
+            
+            if (firstPoint.length < 3 || lastPoint.length < 3) return 0;
+            
+            double firstM = Double.parseDouble(firstPoint[2]);
+            double lastM = Double.parseDouble(lastPoint[2]);
+            
+            // Unix timestamp vs 상대시간 구분
+            if ("unix".equals(mValueFormat) || track.getTrackGeomV2() != null) {
+                // Unix timestamp: 차이가 경과 시간(초)
+                return (long)(lastM - firstM);
+            } else {
+                // 상대시간: 마지막 M값이 경과 시간(초)
+                return (long)lastM;
+            }
+        } catch (Exception e) {
+            log.warn("M값 파싱 실패, 기존 방식 사용: {}", e.getMessage());
+            return java.time.Duration.between(
+                    track.getStartPosition().getTime(),
+                    track.getEndPosition().getTime()
+            ).getSeconds();
         }
     }
 

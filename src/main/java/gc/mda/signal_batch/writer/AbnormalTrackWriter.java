@@ -13,6 +13,7 @@ import org.springframework.batch.item.Chunk;
 import org.springframework.batch.item.ItemWriter;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -36,6 +37,15 @@ public class AbnormalTrackWriter implements ItemWriter<AbnormalDetectionResult> 
     @Autowired
     @Qualifier("queryJdbcTemplate")
     private JdbcTemplate jdbcTemplate;
+    
+    @Value("${vessel.batch.m-value.format:relative}")
+    private String mValueFormat;
+    
+    @Value("${vessel.batch.m-value.dual-write:false}")
+    private boolean dualWrite;
+    
+    @Value("${vessel.batch.m-value.read-column:track_geom}")
+    private String readColumn;
     
     private final ObjectMapper objectMapper = new ObjectMapper()
             .registerModule(new JavaTimeModule())
@@ -79,15 +89,19 @@ public class AbnormalTrackWriter implements ItemWriter<AbnormalDetectionResult> 
     }
     
     private void saveAbnormalTracks(List<AbnormalDetectionResult> results) {
-        String sql = """
+        // 설정에 따른 컬럼 선택
+        boolean useV2 = "track_geom_v2".equals(readColumn) || "unix".equals(mValueFormat);
+        String geomColumn = useV2 ? "track_geom_v2" : "track_geom";
+        
+        String sql = String.format("""
             INSERT INTO signal.t_abnormal_tracks (
-                sig_src_cd, target_id, time_bucket, track_geom,
+                sig_src_cd, target_id, time_bucket, %s,
                 abnormal_type, abnormal_reason, distance_nm, avg_speed,
                 max_speed, point_count, source_table
             ) VALUES (?, ?, ?, ST_GeomFromText(?, 4326), ?, ?::jsonb, ?, ?, ?, ?, ?)
             ON CONFLICT (sig_src_cd, target_id, time_bucket, source_table) 
             DO UPDATE SET
-                track_geom = EXCLUDED.track_geom,
+                %s = EXCLUDED.%s,
                 abnormal_type = EXCLUDED.abnormal_type,
                 abnormal_reason = EXCLUDED.abnormal_reason,
                 distance_nm = EXCLUDED.distance_nm,
@@ -95,7 +109,7 @@ public class AbnormalTrackWriter implements ItemWriter<AbnormalDetectionResult> 
                 max_speed = EXCLUDED.max_speed,
                 point_count = EXCLUDED.point_count,
                 detected_at = NOW()
-        """;
+        """, geomColumn, geomColumn, geomColumn);
         
         List<Object[]> batchArgs = new ArrayList<>();
         
@@ -122,7 +136,20 @@ public class AbnormalTrackWriter implements ItemWriter<AbnormalDetectionResult> 
             
             try {
                 String reasonJson = objectMapper.writeValueAsString(abnormalReason);
-                String geomWkt = track.getTrackGeom();
+                // VesselTrack에서 적절한 geometry 선택
+                String geomWkt = null;
+                if (useV2) {
+                    // track_geom_v2 우선 사용
+                    geomWkt = track.getTrackGeomV2() != null ? track.getTrackGeomV2() : track.getTrackGeom();
+                } else {
+                    // track_geom 우선 사용
+                    geomWkt = track.getTrackGeom() != null ? track.getTrackGeom() : track.getTrackGeomV2();
+                }
+                
+                if (geomWkt == null) {
+                    log.warn("비정상 궤적에 geometry 데이터 없음: vessel={}", track.getVesselKey());
+                    continue;
+                }
                 
                 batchArgs.add(new Object[] {
                     track.getSigSrcCd(),

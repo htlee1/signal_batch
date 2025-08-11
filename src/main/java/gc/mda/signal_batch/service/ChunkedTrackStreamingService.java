@@ -432,8 +432,25 @@ public class ChunkedTrackStreamingService {
                     // 평균속도 계산 (전체 궤적 기반)
                     double avgSpeed = 0.0;
                     if (acc.totalDistance > 0 && acc.timestamps.size() > 1) {
-                        LocalDateTime startTime = LocalDateTime.parse(acc.timestamps.get(0), TIMESTAMP_FORMATTER);
-                        LocalDateTime endTime = LocalDateTime.parse(acc.timestamps.get(acc.timestamps.size() - 1), TIMESTAMP_FORMATTER);
+                        String firstTs = acc.timestamps.get(0);
+                        String lastTs = acc.timestamps.get(acc.timestamps.size() - 1);
+                        
+                        LocalDateTime startTime;
+                        LocalDateTime endTime;
+                        
+                        // Unix timestamp 감지 (10자리 이상 숫자)
+                        if (firstTs.matches("\\d{10,}")) {
+                            startTime = LocalDateTime.ofInstant(
+                                java.time.Instant.ofEpochSecond(Long.parseLong(firstTs)), 
+                                java.time.ZoneId.systemDefault());
+                            endTime = LocalDateTime.ofInstant(
+                                java.time.Instant.ofEpochSecond(Long.parseLong(lastTs)), 
+                                java.time.ZoneId.systemDefault());
+                        } else {
+                            startTime = LocalDateTime.parse(firstTs, TIMESTAMP_FORMATTER);
+                            endTime = LocalDateTime.parse(lastTs, TIMESTAMP_FORMATTER);
+                        }
+                        
                         double hours = Duration.between(startTime, endTime).toMinutes() / 60.0;
                         if (hours > 0) {
                             avgSpeed = acc.totalDistance / hours;
@@ -702,8 +719,25 @@ public class ChunkedTrackStreamingService {
 
                                         double avgSpeed = 0.0;
                                         if (acc.totalDistance > 0 && acc.timestamps.size() > 1) {
-                                            LocalDateTime start = LocalDateTime.parse(acc.timestamps.get(0), TIMESTAMP_FORMATTER);
-                                            LocalDateTime end = LocalDateTime.parse(acc.timestamps.get(acc.timestamps.size() - 1), TIMESTAMP_FORMATTER);
+                                            String firstTs = acc.timestamps.get(0);
+                                            String lastTs = acc.timestamps.get(acc.timestamps.size() - 1);
+                                            
+                                            LocalDateTime start;
+                                            LocalDateTime end;
+                                            
+                                            // Unix timestamp 감지 (10자리 이상 숫자)
+                                            if (firstTs.matches("\\d{10,}")) {
+                                                start = LocalDateTime.ofInstant(
+                                                    java.time.Instant.ofEpochSecond(Long.parseLong(firstTs)), 
+                                                    java.time.ZoneId.systemDefault());
+                                                end = LocalDateTime.ofInstant(
+                                                    java.time.Instant.ofEpochSecond(Long.parseLong(lastTs)), 
+                                                    java.time.ZoneId.systemDefault());
+                                            } else {
+                                                start = LocalDateTime.parse(firstTs, TIMESTAMP_FORMATTER);
+                                                end = LocalDateTime.parse(lastTs, TIMESTAMP_FORMATTER);
+                                            }
+                                            
                                             double hours = Duration.between(start, end).toMinutes() / 60.0;
                                             if (hours > 0) {
                                                 avgSpeed = acc.totalDistance / hours;
@@ -1258,8 +1292,26 @@ public class ChunkedTrackStreamingService {
                 .map(builder -> {
                     CompactVesselTrack track = builder.build();
                     if (track.getTotalDistance() > 0 && track.getTimestamps().size() > 1) {
-                        LocalDateTime startTime = LocalDateTime.parse(track.getTimestamps().get(0), TIMESTAMP_FORMATTER);
-                        LocalDateTime endTime = LocalDateTime.parse(track.getTimestamps().get(track.getTimestamps().size() - 1), TIMESTAMP_FORMATTER);
+                        // Unix timestamp 지원
+                        String firstTs = track.getTimestamps().get(0);
+                        String lastTs = track.getTimestamps().get(track.getTimestamps().size() - 1);
+                        
+                        LocalDateTime startTime;
+                        LocalDateTime endTime;
+                        
+                        // Unix timestamp 감지 (10자리 이상 숫자)
+                        if (firstTs.matches("\\d{10,}")) {
+                            startTime = LocalDateTime.ofInstant(
+                                java.time.Instant.ofEpochSecond(Long.parseLong(firstTs)), 
+                                java.time.ZoneId.systemDefault());
+                            endTime = LocalDateTime.ofInstant(
+                                java.time.Instant.ofEpochSecond(Long.parseLong(lastTs)), 
+                                java.time.ZoneId.systemDefault());
+                        } else {
+                            startTime = LocalDateTime.parse(firstTs, TIMESTAMP_FORMATTER);
+                            endTime = LocalDateTime.parse(lastTs, TIMESTAMP_FORMATTER);
+                        }
+                        
                         double hours = java.time.Duration.between(startTime, endTime).toMinutes() / 60.0;
                         if (hours > 0) {
                             track.setAvgSpeed(track.getTotalDistance() / hours);
@@ -1563,12 +1615,24 @@ public class ChunkedTrackStreamingService {
             List<Double> simplifiedSpeeds = new ArrayList<>();
             List<String> simplifiedTimestamps = new ArrayList<>();
 
-            // 시간 조정
+            // 시간 조정 (Unix timestamp 지원)
             for (String timestamp : track.getTimestamps()) {
-                LocalDateTime time = LocalDateTime.parse(timestamp, TIMESTAMP_FORMATTER);
-                long secondsFromBase = ChronoUnit.SECONDS.between(dayBaseTime, time);
-                LocalDateTime adjustedTime = dayBaseTime.plusSeconds(secondsFromBase);
-                adjustedTimestamps.add(TIMESTAMP_FORMATTER.format(adjustedTime));
+                LocalDateTime time;
+                
+                // Unix timestamp 감지 (10자리 이상 숫자)
+                if (timestamp.matches("\\d{10,}")) {
+                    // Unix timestamp는 이미 UTC이므로 바로 변환
+                    time = LocalDateTime.ofInstant(
+                        java.time.Instant.ofEpochSecond(Long.parseLong(timestamp)), 
+                        java.time.ZoneId.systemDefault());
+                    // Unix timestamp는 조정 없이 그대로 사용
+                    adjustedTimestamps.add(timestamp);
+                } else {
+                    time = LocalDateTime.parse(timestamp, TIMESTAMP_FORMATTER);
+                    long secondsFromBase = ChronoUnit.SECONDS.between(dayBaseTime, time);
+                    LocalDateTime adjustedTime = dayBaseTime.plusSeconds(secondsFromBase);
+                    adjustedTimestamps.add(TIMESTAMP_FORMATTER.format(adjustedTime));
+                }
             }
 
             // 간소화 적용 (시간 기반 샘플링 포함)
@@ -1579,7 +1643,17 @@ public class ChunkedTrackStreamingService {
 
                 for (int i = 0; i < track.getGeometry().size(); i++) {
                     double[] point = track.getGeometry().get(i);
-                    LocalDateTime currentTime = LocalDateTime.parse(adjustedTimestamps.get(i), TIMESTAMP_FORMATTER);
+                    LocalDateTime currentTime;
+                    String tsStr = adjustedTimestamps.get(i);
+                    
+                    // Unix timestamp 감지
+                    if (tsStr.matches("\\d{10,}")) {
+                        currentTime = LocalDateTime.ofInstant(
+                            java.time.Instant.ofEpochSecond(Long.parseLong(tsStr)), 
+                            java.time.ZoneId.systemDefault());
+                    } else {
+                        currentTime = LocalDateTime.parse(tsStr, TIMESTAMP_FORMATTER);
+                    }
                     boolean include = false;
 
                     // 첫 포인트나 마지막 포인트는 항상 포함
