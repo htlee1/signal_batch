@@ -3,6 +3,8 @@ package gc.mda.signal_batch.controller;
 import gc.mda.signal_batch.dto.GisBoundaryResponse;
 import gc.mda.signal_batch.dto.VesselStatsResponse;
 import gc.mda.signal_batch.dto.TrackResponse;
+import gc.mda.signal_batch.dto.VesselTracksRequest;
+import gc.mda.signal_batch.dto.CompactVesselTrack;
 import gc.mda.signal_batch.service.GisService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -62,5 +64,12 @@ public class GisController {
             @PathVariable String areaId,
             @RequestParam(defaultValue = "60") int minutes) {
         return gisService.getAreaTracks(areaId, minutes);
+    }
+    
+    @PostMapping("/tracks/vessels")
+    @Operation(summary = "선박별 항적 조회", description = "지정된 선박들의 항적을 조회합니다.")
+    public List<CompactVesselTrack> getVesselTracks(
+            @RequestBody VesselTracksRequest request) {
+        return gisService.getVesselTracks(request);
     }
 }

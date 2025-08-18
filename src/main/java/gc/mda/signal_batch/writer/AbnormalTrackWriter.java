@@ -82,8 +82,8 @@ public class AbnormalTrackWriter implements ItemWriter<AbnormalDetectionResult> 
     }
     
     private void saveAbnormalTracks(List<AbnormalDetectionResult> results) {
-        // track_geom_v2만 사용
-        String geomColumn = "track_geom_v2";
+        // track_geom만 사용
+        String geomColumn = "track_geom";
         
         String sql = String.format("""
             INSERT INTO signal.t_abnormal_tracks (
@@ -128,8 +128,8 @@ public class AbnormalTrackWriter implements ItemWriter<AbnormalDetectionResult> 
             
             try {
                 String reasonJson = objectMapper.writeValueAsString(abnormalReason);
-                // track_geom_v2만 사용
-                String geomWkt = track.getTrackGeomV2();
+                // track_geom만 사용
+                String geomWkt = track.getTrackGeom();
                 
                 if (geomWkt == null) {
                     log.warn("비정상 궤적에 geometry 데이터 없음: vessel={}", track.getVesselKey());

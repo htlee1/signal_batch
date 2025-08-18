@@ -3,6 +3,8 @@ package gc.mda.signal_batch.service;
 import gc.mda.signal_batch.dto.GisBoundaryResponse;
 import gc.mda.signal_batch.dto.TrackResponse;
 import gc.mda.signal_batch.dto.VesselStatsResponse;
+import gc.mda.signal_batch.dto.VesselTracksRequest;
+import gc.mda.signal_batch.dto.CompactVesselTrack;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -12,11 +14,15 @@ import javax.sql.DataSource;
 import java.math.BigDecimal;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Timestamp;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
+import org.locationtech.jts.io.WKTReader;
 
 @Slf4j
 @Service
@@ -303,5 +309,199 @@ public class GisService {
                   allTracks.size(), areaId, minutes);
         
         return allTracks;
+    }
+    
+    public List<CompactVesselTrack> getVesselTracks(VesselTracksRequest request) {
+        JdbcTemplate jdbcTemplate = new JdbcTemplate(queryDataSource);
+        List<CompactVesselTrack> results = new ArrayList<>();
+        
+        LocalDateTime startTime = request.getStartTime();
+        LocalDateTime endTime = request.getEndTime();
+        
+        for (VesselTracksRequest.VesselIdentifier vessel : request.getVessels()) {
+            String vesselId = vessel.getSigSrcCd() + "_" + vessel.getTargetId();
+            
+            // Determine which tables to query based on time range
+            Duration duration = Duration.between(startTime, endTime);
+            long hours = duration.toHours();
+            
+            List<TrackResponse> tracks = new ArrayList<>();
+            LocalDateTime now = LocalDateTime.now();
+            LocalDateTime currentHour = now.withMinute(0).withSecond(0).withNano(0);
+            LocalDateTime currentDay = now.withHour(0).withMinute(0).withSecond(0).withNano(0);
+            
+            if (hours <= 1 || endTime.isAfter(currentHour)) {
+                // Query 5min table for recent data
+                String sql5min = """
+                    SELECT sig_src_cd, target_id, time_bucket,
+                           ST_AsText(track_geom) as track_geom,
+                           distance_nm, avg_speed, max_speed, point_count
+                    FROM signal.t_vessel_tracks_5min
+                    WHERE sig_src_cd = ? AND target_id = ?
+                    AND time_bucket BETWEEN ? AND ?
+                    ORDER BY time_bucket
+                """;
+                
+                LocalDateTime query5minStart = startTime.isAfter(currentHour) ? startTime : currentHour;
+                if (endTime.isAfter(currentHour)) {
+                    tracks.addAll(jdbcTemplate.query(sql5min, this::mapTrackResponse,
+                        vessel.getSigSrcCd(), vessel.getTargetId(),
+                        Timestamp.valueOf(query5minStart), Timestamp.valueOf(endTime)));
+                }
+            }
+            
+            if (hours > 1 && startTime.isBefore(currentHour)) {
+                // Query hourly table
+                String sqlHourly = """
+                    SELECT sig_src_cd, target_id, time_bucket,
+                           ST_AsText(track_geom) as track_geom,
+                           distance_nm, avg_speed, max_speed, point_count
+                    FROM signal.t_vessel_tracks_hourly
+                    WHERE sig_src_cd = ? AND target_id = ?
+                    AND time_bucket BETWEEN ? AND ?
+                    ORDER BY time_bucket
+                """;
+                
+                LocalDateTime queryHourlyEnd = endTime.isBefore(currentHour) ? endTime : currentHour;
+                if (hours <= 24 || startTime.isAfter(currentDay)) {
+                    tracks.addAll(jdbcTemplate.query(sqlHourly, this::mapTrackResponse,
+                        vessel.getSigSrcCd(), vessel.getTargetId(),
+                        Timestamp.valueOf(startTime), Timestamp.valueOf(queryHourlyEnd)));
+                }
+            }
+            
+            if (hours > 24 && startTime.isBefore(currentDay)) {
+                // Query daily table - time_bucket is DATE type
+                String sqlDaily = """
+                    SELECT sig_src_cd, target_id, 
+                           time_bucket::timestamp as time_bucket,
+                           ST_AsText(track_geom) as track_geom,
+                           distance_nm, avg_speed, max_speed, point_count
+                    FROM signal.t_vessel_tracks_daily
+                    WHERE sig_src_cd = ? AND target_id = ?
+                    AND time_bucket BETWEEN ?::date AND ?::date
+                    ORDER BY time_bucket
+                """;
+                
+                LocalDateTime queryDailyEnd = endTime.isBefore(currentDay) ? endTime : currentDay;
+                tracks.addAll(jdbcTemplate.query(sqlDaily, this::mapTrackResponse,
+                    vessel.getSigSrcCd(), vessel.getTargetId(),
+                    Timestamp.valueOf(startTime), Timestamp.valueOf(queryDailyEnd)));
+            }
+            
+            if (!tracks.isEmpty()) {
+                CompactVesselTrack compactTrack = buildCompactVesselTrack(vessel, tracks);
+                results.add(compactTrack);
+            }
+        }
+        
+        return results;
+    }
+    
+    private CompactVesselTrack buildCompactVesselTrack(
+            VesselTracksRequest.VesselIdentifier vessel,
+            List<TrackResponse> tracks) {
+        
+        String vesselId = vessel.getSigSrcCd() + "_" + vessel.getTargetId();
+        List<double[]> geometry = new ArrayList<>();
+        List<String> timestamps = new ArrayList<>();
+        List<Double> speeds = new ArrayList<>();
+        double totalDistance = 0;
+        double maxSpeed = 0;
+        int totalPoints = 0;
+        
+        WKTReader reader = new WKTReader();
+        
+        for (TrackResponse track : tracks) {
+            if (track.getTrackGeom() != null && !track.getTrackGeom().isEmpty()) {
+                try {
+                    // Parse LineStringM
+                    String wkt = track.getTrackGeom();
+                    if (wkt.startsWith("LINESTRING M")) {
+                        // Extract coordinate data from WKT
+                        String coordsPart = wkt.substring("LINESTRING M(".length() + 1, wkt.length() - 1);
+                        String[] points = coordsPart.split(",");
+                        
+                        for (String point : points) {
+                            String[] parts = point.trim().split("\\s+");
+                            if (parts.length >= 3) {
+                                double lon = Double.parseDouble(parts[0]);
+                                double lat = Double.parseDouble(parts[1]);
+                                String timestamp = parts[2]; // Unix timestamp as string
+                                
+                                geometry.add(new double[]{lon, lat});
+                                timestamps.add(timestamp);
+                                
+                                // Add SOG value if available (could be from track data)
+                                if (track.getAvgSpeed() != null) {
+                                    speeds.add(track.getAvgSpeed().doubleValue());
+                                } else {
+                                    speeds.add(0.0);
+                                }
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    log.warn("Failed to parse track geometry: {}", e.getMessage());
+                }
+            }
+            
+            if (track.getDistanceNm() != null) {
+                totalDistance += track.getDistanceNm().doubleValue();
+            }
+            if (track.getMaxSpeed() != null && track.getMaxSpeed().doubleValue() > maxSpeed) {
+                maxSpeed = track.getMaxSpeed().doubleValue();
+            }
+            if (track.getPointCount() != null) {
+                totalPoints += track.getPointCount();
+            }
+        }
+        
+        // Calculate average speed
+        double avgSpeed = speeds.stream()
+            .filter(s -> s > 0)
+            .mapToDouble(Double::doubleValue)
+            .average()
+            .orElse(0.0);
+        
+        // Get vessel info
+        Map<String, String> vesselInfo = getVesselInfo(vessel.getSigSrcCd(), vessel.getTargetId());
+        
+        return CompactVesselTrack.builder()
+            .vesselId(vesselId)
+            .sigSrcCd(vessel.getSigSrcCd())
+            .targetId(vessel.getTargetId())
+            .geometry(geometry)
+            .timestamps(timestamps)
+            .speeds(speeds)
+            .totalDistance(totalDistance)
+            .avgSpeed(avgSpeed)
+            .maxSpeed(maxSpeed)
+            .pointCount(geometry.size())
+            .shipName(vesselInfo.get("ship_name"))
+            .shipType(vesselInfo.get("ship_type"))
+            .shipKindCode(null) // Not available in current schema
+            .build();
+    }
+    
+    private Map<String, String> getVesselInfo(String sigSrcCd, String targetId) {
+        JdbcTemplate jdbcTemplate = new JdbcTemplate(queryDataSource);
+        try {
+            String sql = """
+                SELECT ship_nm as ship_name, ship_ty as ship_type
+                FROM signal.t_vessel_latest_position
+                WHERE sig_src_cd = ? AND target_id = ?
+                LIMIT 1
+            """;
+            
+            return jdbcTemplate.queryForMap(sql, sigSrcCd, targetId)
+                .entrySet().stream()
+                .collect(Collectors.toMap(
+                    Map.Entry::getKey,
+                    e -> e.getValue() != null ? e.getValue().toString() : ""
+                ));
+        } catch (Exception e) {
+            return Map.of("ship_name", "", "ship_type", "");
+        }
     }
 }

@@ -38,7 +38,7 @@ public class AbnormalTrackService {
     
     private final ObjectMapper objectMapper = new ObjectMapper();
     
-    // track_geom_v2 고정 사용
+    // track_geom 고정 사용
     
     /**
      * 특정 시간 이후의 비정상 궤적 조회
@@ -65,17 +65,17 @@ public class AbnormalTrackService {
                     'coordinates', (
                         SELECT jsonb_agg(
                             jsonb_build_array(
-                                ST_X(ST_PointN(track_geom_v2, point_num)),
-                                ST_Y(ST_PointN(track_geom_v2, point_num)),
-                                ST_M(ST_PointN(track_geom_v2, point_num))
+                                ST_X(ST_PointN(track_geom, point_num)),
+                                ST_Y(ST_PointN(track_geom, point_num)),
+                                ST_M(ST_PointN(track_geom, point_num))
                             )
                         )
-                        FROM generate_series(1, ST_NPoints(track_geom_v2)) AS point_num
+                        FROM generate_series(1, ST_NPoints(track_geom)) AS point_num
                     )
                 )::text as track_geojson
             FROM signal.t_abnormal_tracks
             WHERE detected_at >= ?
-                AND track_geom_v2 IS NOT NULL
+                AND track_geom IS NOT NULL
             ORDER BY detected_at DESC
             LIMIT 1000
         """;
@@ -277,7 +277,7 @@ public class AbnormalTrackService {
         String tableName = tableType.equals("hourly") ? 
             "t_vessel_tracks_hourly" : "t_vessel_tracks_daily";
         
-        // track_geom_v2 사용
+        // track_geom 사용
         
         String sql = String.format("""
             SELECT 
@@ -295,12 +295,12 @@ public class AbnormalTrackService {
                     'coordinates', (
                         SELECT jsonb_agg(
                             jsonb_build_array(
-                                ST_X(ST_PointN(track_geom_v2, point_num)),
-                                ST_Y(ST_PointN(track_geom_v2, point_num)),
-                                ST_M(ST_PointN(track_geom_v2, point_num))
+                                ST_X(ST_PointN(track_geom, point_num)),
+                                ST_Y(ST_PointN(track_geom, point_num)),
+                                ST_M(ST_PointN(track_geom, point_num))
                             )
                         )
-                        FROM generate_series(1, ST_NPoints(track_geom_v2)) AS point_num
+                        FROM generate_series(1, ST_NPoints(track_geom)) AS point_num
                     )
                 )::text as track_geojson,
                 start_position,
@@ -308,7 +308,7 @@ public class AbnormalTrackService {
             FROM signal.%s
             WHERE time_bucket >= ?
               AND time_bucket < ?
-              AND track_geom_v2 IS NOT NULL
+              AND track_geom IS NOT NULL
               AND (? = 0 OR distance_nm >= ?)
               AND (? = 0 OR avg_speed >= ?)
             ORDER BY time_bucket DESC, distance_nm DESC
@@ -387,17 +387,17 @@ public class AbnormalTrackService {
         for (TrackIdentifier track : tracks) {
             try {
                 // 1. t_abnormal_tracks로 복사
-                // track_geom_v2 고정 사용
+                // track_geom 고정 사용
                 
                 String insertSql = String.format("""
                     INSERT INTO signal.t_abnormal_tracks (
                         sig_src_cd, target_id, time_bucket, abnormal_type, abnormal_reason,
-                        distance_nm, avg_speed, max_speed, point_count, track_geom_v2,
+                        distance_nm, avg_speed, max_speed, point_count, track_geom,
                         source_table, detected_at
                     )
                     SELECT 
                         sig_src_cd, target_id, time_bucket, ?, ?::jsonb,
-                        distance_nm, avg_speed, max_speed, point_count, track_geom_v2,
+                        distance_nm, avg_speed, max_speed, point_count, track_geom,
                         ?, NOW()
                     FROM signal.%s
                     WHERE sig_src_cd = ?

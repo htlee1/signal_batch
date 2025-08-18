@@ -219,16 +219,18 @@ public class TrackClippingUtils {
             trackPoints = Arrays.asList(point, point);
         }
         
-        java.time.LocalDateTime baseTime = trackPoints.get(0).getTime();
+        // Unix timestamp 사용 (UnixTimestampStrategy와 동일한 방식)
+        java.time.ZoneId KST_ZONE = java.time.ZoneId.of("Asia/Seoul");
         
         StringBuilder wkt = new StringBuilder("LINESTRING M(");
         for (int i = 0; i < trackPoints.size(); i++) {
             VesselTrack.TrackPoint point = trackPoints.get(i);
             if (i > 0) wkt.append(", ");
             
-            long secondsFromBase = java.time.Duration.between(baseTime, point.getTime()).getSeconds();
+            // KST LocalDateTime을 UTC epoch로 변환
+            long unixTimestamp = java.time.ZonedDateTime.of(point.getTime(), KST_ZONE).toEpochSecond();
             wkt.append(String.format("%.6f %.6f %d", 
-                    point.getLon(), point.getLat(), secondsFromBase));
+                    point.getLon(), point.getLat(), unixTimestamp));
         }
         wkt.append(")");
         

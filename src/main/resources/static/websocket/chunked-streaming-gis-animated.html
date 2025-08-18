@@ -619,9 +619,17 @@
             document.getElementById('maxLat').value = bounds.getNorth().toFixed(4);
             
             // 애니메이션 시간 설정
+            // 입력 시간을 그대로 사용 (로컬 시간대)
             animationState.startTime = new Date(request.startTime).getTime();
             animationState.endTime = new Date(request.endTime).getTime();
             animationState.currentTime = animationState.startTime;
+            
+            console.log('[ANIMATION_TIME] Settings:', {
+                inputStart: request.startTime,
+                inputEnd: request.endTime,
+                startTime: new Date(animationState.startTime),
+                endTime: new Date(animationState.endTime)
+            });
             
             updateTimeline();
             
@@ -644,10 +652,24 @@
             chunksReceived++;
             totalDataSize += message.body.length / 1024;
             
+            console.log(`[CHUNK ${chunksReceived}] Received:`, {
+                tracksCount: chunk.compactTracks ? chunk.compactTracks.length : 0,
+                firstTrack: chunk.compactTracks ? chunk.compactTracks[0] : null
+            });
+            
             // 압축된 트랙 처리
             if (chunk.compactTracks) {
-                chunk.compactTracks.forEach(track => {
+                chunk.compactTracks.forEach((track, idx) => {
                     const vesselId = track.vesselId;
+                    
+                    // 모든 트랙의 timestamps 타입 확인 (처음 3개만)
+                    if (idx < 3) {
+                        console.log(`[TRACK ${idx}] ${vesselId}:`, {
+                            timestamps: track.timestamps,
+                            firstTimestamp: track.timestamps ? track.timestamps[0] : null,
+                            geometry: track.geometry ? track.geometry.length : 0
+                        });
+                    }
                     
                     // 청크 단위로 저장 (병합하지 않음)
                     if (!vesselChunks.has(vesselId)) {
@@ -742,12 +764,15 @@
         function updateLayers() {
             const layers = [];
             
+            console.log('[UPDATE_LAYERS] Called, vesselChunks.size:', vesselChunks.size);
+            
             // 궤적 레이어
             if (document.getElementById('showTracks').checked) {
                 const pathData = [];
                 const opacity = parseInt(document.getElementById('trackOpacity').value) / 100;
                 const colorBySpeed = document.getElementById('colorBySpeed').checked;
                 
+                let debugCount = 0;
                 vesselChunks.forEach(vessel => {
                     // 캐시된 경로가 없으면 생성
                     if (!vessel.cachedPath) {
@@ -756,6 +781,64 @@
                     
                     if (vessel.cachedPath.geometry.length > 1) {
                         const timestamps = vessel.cachedPath.timestamps;
+                        
+                        // 처음 3개 선박만 로그
+                        if (debugCount++ < 3) {
+                            console.log(`[PATH_DATA] Vessel ${vessel.sigSrcCd}_${vessel.targetId}:`, {
+                                geometryLength: vessel.cachedPath.geometry.length,
+                                timestampsLength: timestamps.length,
+                                firstTimestamp: timestamps[0],
+                                lastTimestamp: timestamps[timestamps.length - 1]
+                            });
+                        }
+                        
+                        // Unix timestamp(초) 문자열을 Date 객체로 변환
+                        let startTime = null, endTime = null;
+                        
+                        // 첫 번째 timestamp 처리
+                        if (timestamps && timestamps.length > 0 && timestamps[0]) {
+                            const firstTs = String(timestamps[0]);
+                            if (firstTs.match(/^\d{10,}$/)) {
+                                // Unix timestamp (초 단위) - 실제로는 UTC epoch과 동일하게 저장됨
+                                startTime = new Date(parseInt(firstTs) * 1000);
+                            } else if (firstTs.includes('-') || firstTs.includes('T')) {
+                                // ISO 문자열 형식
+                                startTime = new Date(firstTs);
+                            }
+                            
+                            // 디버깅 로그 (처음 3개 선박만)
+                            if (vesselChunks.size <= 3) {
+                                console.log(`Vessel ${vessel.sigSrcCd}_${vessel.targetId}:`, {
+                                    firstTs: firstTs,
+                                    startTime: startTime,
+                                    isValid: startTime && !isNaN(startTime.getTime())
+                                });
+                            }
+                        }
+                        
+                        // 마지막 timestamp 처리
+                        if (timestamps && timestamps.length > 0 && timestamps[timestamps.length - 1]) {
+                            const lastTs = String(timestamps[timestamps.length - 1]);
+                            if (lastTs.match(/^\d{10,}$/)) {
+                                // Unix timestamp (초 단위) - KST로 저장된 값이므로 -9시간 보정
+                                const utcTime = parseInt(lastTs) - (9 * 60 * 60); // -9시간 보정
+                                endTime = new Date(utcTime * 1000);
+                            } else if (lastTs.includes('-') || lastTs.includes('T')) {
+                                // ISO 문자열 형식
+                                endTime = new Date(lastTs);
+                            }
+                        }
+                        
+                        // 유효성 검사
+                        if (!startTime || isNaN(startTime.getTime())) {
+                            console.warn(`Invalid startTime for vessel ${vessel.sigSrcCd}_${vessel.targetId}`);
+                            startTime = new Date(); // fallback to current time
+                        }
+                        if (!endTime || isNaN(endTime.getTime())) {
+                            console.warn(`Invalid endTime for vessel ${vessel.sigSrcCd}_${vessel.targetId}`);
+                            endTime = new Date(); // fallback to current time
+                        }
+                        
                         pathData.push({
                             path: vessel.cachedPath.geometry,
                             color: colorBySpeed ? getSpeedColor(vessel.avgSpeed) : [0, 255, 0],
@@ -763,8 +846,8 @@
                             vesselId: `${vessel.sigSrcCd}_${vessel.targetId}`,
                             avgSpeed: vessel.avgSpeed,
                             distance: vessel.totalDistance,
-                            startTime: timestamps[0],
-                            endTime: timestamps[timestamps.length - 1]
+                            startTime: startTime,
+                            endTime: endTime
                         });
                     }
                 });
@@ -839,8 +922,16 @@
             const timestamps = vessel.cachedPath.timestamps;
             if (!timestamps || timestamps.length === 0) return null;
             
-            // 시간을 밀리초로 변환
-            const times = timestamps.map(t => new Date(t).getTime());
+            // Unix timestamp(초) 문자열을 밀리초로 변환 (KST 보정)
+            const times = timestamps.map(t => {
+                if (typeof t === 'string' && t.match(/^\d{10,}$/)) {
+                    // Unix timestamp - KST로 저장된 값이므로 -9시간 보정
+                    const utcTime = parseInt(t) - (9 * 60 * 60);
+                    return utcTime * 1000;
+                } else {
+                    return new Date(t).getTime();
+                }
+            });
             const firstTime = times[0];
             const lastTime = times[times.length - 1];
             
@@ -882,11 +973,23 @@
         // 선박 경로 생성 (렌더링 시점에만)
         function createVesselPath(vessel) {
             // flatMap으로 가상 병합 (메모리 복사 없음)
-            return {
+            const path = {
                 geometry: vessel.chunks.flatMap(c => c.geometry),
                 timestamps: vessel.chunks.flatMap(c => c.timestamps),
                 speeds: vessel.chunks.flatMap(c => c.speeds)
             };
+            
+            // 디버깅: 처음 3개 선박의 경로 데이터 확인
+            if (vesselChunks.size <= 3) {
+                console.log(`createVesselPath for ${vessel.sigSrcCd}_${vessel.targetId}:`, {
+                    chunks: vessel.chunks.length,
+                    totalTimestamps: path.timestamps.length,
+                    firstTimestamp: path.timestamps[0],
+                    lastTimestamp: path.timestamps[path.timestamps.length - 1]
+                });
+            }
+            
+            return path;
         }
         
         // 색상 함수
@@ -908,8 +1011,18 @@
         function showTooltip(info) {
             if (info.object) {
                 const tooltip = document.getElementById('vesselTooltip');
-                const startDate = new Date(info.object.startTime);
-                const endDate = new Date(info.object.endTime);
+                // startTime과 endTime은 Date 객체이거나 undefined일 수 있음
+                const startDate = info.object.startTime instanceof Date ? info.object.startTime : new Date(info.object.startTime);
+                const endDate = info.object.endTime instanceof Date ? info.object.endTime : new Date(info.object.endTime);
+                
+                // 디버깅
+                console.log('Tooltip data:', {
+                    vesselId: info.object.vesselId,
+                    startTime: info.object.startTime,
+                    endTime: info.object.endTime,
+                    startDate: startDate,
+                    endDate: endDate
+                });
                 tooltip.innerHTML = `
                     <strong>선박 ID:</strong> ${info.object.vesselId}<br>
                     <strong>평균 속도:</strong> ${info.object.avgSpeed.toFixed(1)} knots<br>
@@ -994,8 +1107,6 @@
                 btn.classList.remove('btn-secondary');
                 btn.classList.add('btn-outline-secondary');
             });
-            event.target.classList.remove('btn-outline-secondary');
-            event.target.classList.add('btn-secondary');
         }
         
         // 타임라인 업데이트

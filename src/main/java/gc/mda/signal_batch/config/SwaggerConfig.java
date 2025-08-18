@@ -77,7 +77,7 @@ public class SwaggerConfig {
         return GroupedOpenApi.builder()
                 .group("1-track-api")
                 .displayName("항적 조회 API")
-                .pathsToMatch("/api/v1/tracks/**", "/api/v1/haegu/**", "/api/v1/areas/**")
+                .pathsToMatch("/api/v1/tracks/**", "/api/v1/haegu/**", "/api/v1/areas/**", "/api/v1/passages/**")
                 .build();
     }
 

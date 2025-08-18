@@ -82,7 +82,7 @@ public class VesselTrackBulkWriter implements ItemWriter<List<VesselTrack>> {
         }
     }
     
-    // track_geom_v2만 사용하는 단순화된 COPY
+    // track_geom만 사용하는 단순화된 COPY
     private void bulkInsertTracks(List<VesselTrack> tracks, String tableName) throws Exception {
         try (Connection conn = queryDataSource.getConnection()) {
             BaseConnection baseConn = conn.unwrap(BaseConnection.class);
@@ -90,7 +90,7 @@ public class VesselTrackBulkWriter implements ItemWriter<List<VesselTrack>> {
             
             String copySql = String.format("""
                 COPY %s (
-                    sig_src_cd, target_id, time_bucket, track_geom_v2,
+                    sig_src_cd, target_id, time_bucket, track_geom,
                     distance_nm, avg_speed, max_speed, point_count,
                     start_position, end_position
                 ) FROM STDIN
@@ -114,9 +114,9 @@ public class VesselTrackBulkWriter implements ItemWriter<List<VesselTrack>> {
         sb.append(track.getTargetId()).append('\t');
         sb.append(Timestamp.valueOf(track.getTimeBucket())).append('\t');
         
-        // track_geom_v2만 사용
-        if (track.getTrackGeomV2() != null && !track.getTrackGeomV2().isEmpty()) {
-            sb.append(track.getTrackGeomV2());
+        // track_geom만 사용
+        if (track.getTrackGeom() != null && !track.getTrackGeom().isEmpty()) {
+            sb.append(track.getTrackGeom());
         } else {
             sb.append("\\N");
         }
@@ -187,7 +187,7 @@ public class VesselTrackBulkWriter implements ItemWriter<List<VesselTrack>> {
     private void fallbackInsert(List<VesselTrack> tracks, String tableName) {
         String sql = String.format("""
             INSERT INTO %s (
-                sig_src_cd, target_id, time_bucket, track_geom_v2,
+                sig_src_cd, target_id, time_bucket, track_geom,
                 distance_nm, avg_speed, max_speed, point_count,
                 start_position, end_position
             ) VALUES (?, ?, ?, ST_GeomFromText(?), ?, ?, ?, ?, ?::jsonb, ?::jsonb)
@@ -199,7 +199,7 @@ public class VesselTrackBulkWriter implements ItemWriter<List<VesselTrack>> {
                     track.getSigSrcCd(),
                     track.getTargetId(),
                     Timestamp.valueOf(track.getTimeBucket()),
-                    track.getTrackGeomV2(),
+                    track.getTrackGeom(),
                     track.getDistanceNm(),
                     track.getAvgSpeed(),
                     track.getMaxSpeed(),

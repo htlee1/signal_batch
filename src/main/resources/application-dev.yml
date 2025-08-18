@@ -178,11 +178,6 @@ vessel:  # spring 하위가 아닌 최상위 레벨
         cache-enabled: true
         cache-size: 2000
 
-
-    # MIGRATION_V2: Unix Timestamp 전환 완료
-    m-value:
-      format: unix        # Unix timestamp만 사용
-      dual-write: false     # track_geom_v2만 저장
     
     # 비정상 궤적 검출 설정 (개선됨)
     abnormal-detection:

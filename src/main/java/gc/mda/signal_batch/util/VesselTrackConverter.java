@@ -25,7 +25,7 @@ public class VesselTrackConverter {
     private static final WKTReader wktReader = new WKTReader();
     private static final DateTimeFormatter TIMESTAMP_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     
-    // track_geom_v2 고정 사용
+    // track_geom 고정 사용
     
     /**
      * MergedVesselTrack을 CompactVesselTrack으로 변환

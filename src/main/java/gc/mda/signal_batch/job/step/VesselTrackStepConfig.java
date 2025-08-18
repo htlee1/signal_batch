@@ -222,12 +222,7 @@ public class VesselTrackStepConfig {
                     haegu_no, sig_src_cd, target_id, time_bucket,
                     distance_nm, avg_speed, point_count, entry_time, exit_time
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT (haegu_no, sig_src_cd, target_id, time_bucket) DO UPDATE SET
-                    distance_nm = EXCLUDED.distance_nm,
-                    avg_speed = EXCLUDED.avg_speed,
-                    point_count = EXCLUDED.point_count,
-                    entry_time = EXCLUDED.entry_time,
-                    exit_time = EXCLUDED.exit_time
+                ON CONFLICT (haegu_no, sig_src_cd, target_id, time_bucket) DO NOTHING
             """;
 
             List<Object[]> args = allClippedTracks.stream()
@@ -273,10 +268,7 @@ public class VesselTrackStepConfig {
                     area_id, sig_src_cd, target_id, time_bucket,
                     distance_nm, avg_speed, point_count, metrics
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb)
-                ON CONFLICT (area_id, sig_src_cd, target_id, time_bucket) DO UPDATE SET
-                    distance_nm = EXCLUDED.distance_nm,
-                    avg_speed = EXCLUDED.avg_speed,
-                    point_count = EXCLUDED.point_count
+                ON CONFLICT (area_id, sig_src_cd, target_id, time_bucket) DO NOTHING
             """;
 
             List<Object[]> args = allClippedTracks.stream()

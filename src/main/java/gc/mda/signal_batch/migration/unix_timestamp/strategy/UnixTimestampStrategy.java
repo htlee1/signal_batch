@@ -4,7 +4,8 @@ import gc.mda.signal_batch.model.VesselTrack;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-import java.time.ZoneOffset;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -15,6 +16,8 @@ import java.util.stream.Collectors;
 @Component
 public class UnixTimestampStrategy {
     
+    private static final ZoneId KST_ZONE = ZoneId.of("Asia/Seoul");
+    
     public String buildLineStringM(List<VesselTrack.TrackPoint> trackPoints) {
         if (trackPoints == null || trackPoints.isEmpty()) {
             return null;
@@ -23,7 +26,8 @@ public class UnixTimestampStrategy {
         // 포인트가 하나일 경우 복제하여 2개로 만들기 (LineString은 최소 2개 포인트 필요)
         if (trackPoints.size() == 1) {
             VesselTrack.TrackPoint point = trackPoints.get(0);
-            long unixTimestamp = point.getTime().toEpochSecond(ZoneOffset.UTC);
+            // LocalDateTime을 KST로 해석하여 UTC epoch로 변환
+            long unixTimestamp = ZonedDateTime.of(point.getTime(), KST_ZONE).toEpochSecond();
             String coord = String.format("%.6f %.6f %d", 
                 point.getLon(), 
                 point.getLat(), 
@@ -31,10 +35,11 @@ public class UnixTimestampStrategy {
             return "LINESTRING M(" + coord + "," + coord + ")";
         }
         
-        // Unix timestamp를 M값으로 사용
+        // Unix timestamp를 M값으로 사용 (KST LocalDateTime → UTC epoch)
         String coordinates = trackPoints.stream()
                 .map(point -> {
-                    long unixTimestamp = point.getTime().toEpochSecond(ZoneOffset.UTC);
+                    // LocalDateTime을 KST로 해석하여 UTC epoch로 변환
+                    long unixTimestamp = ZonedDateTime.of(point.getTime(), KST_ZONE).toEpochSecond();
                     return String.format("%.6f %.6f %d", 
                         point.getLon(), 
                         point.getLat(), 

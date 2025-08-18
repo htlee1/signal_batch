@@ -1126,14 +1126,13 @@
                     
                     // 포인트는 선택된 트랙만 표시
                     if (isSelected) {
-                        const timeBucket = new Date(track.timeBucket);
                         geojson.coordinates.forEach((coord, idx) => {
                             // 모든 포인트 표시
                             pointData.push({
                                 position: [coord[0], coord[1]],
                                 vesselId: track.vesselId,
                                 trackId: track.id,
-                                time: new Date(timeBucket.getTime() + (coord[2] || 0) * 1000),
+                                time: new Date((coord[2] || 0) * 1000), // M값이 Unix timestamp이므로 직접 사용
                                 index: idx,
                                 totalPoints: geojson.coordinates.length
                             });

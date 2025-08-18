@@ -100,7 +100,7 @@ public class VesselTrackProcessor implements ItemProcessor<List<VesselData>, Lis
         calculateSpeedStatistics(track, vesselDataList);
 
         // PostGIS LineStringM 생성 (Unix timestamp만 사용)
-        track.setTrackGeomV2(unixStrategy.buildLineStringM(trackPoints));
+        track.setTrackGeom(unixStrategy.buildLineStringM(trackPoints));
 
         // 해구 정보 추가
         addHaeguInfo(track, first);
@@ -150,7 +150,7 @@ public class VesselTrackProcessor implements ItemProcessor<List<VesselData>, Lis
      * LineStringM의 M값으로부터 실제 경과 시간 계산 (Unix timestamp 전용)
      */
     private long calculateDurationFromMValues(VesselTrack track) {
-        String wkt = track.getTrackGeomV2();
+        String wkt = track.getTrackGeom();
         if (wkt == null || !wkt.contains("LINESTRING M")) {
             return java.time.Duration.between(
                     track.getStartPosition().getTime(),

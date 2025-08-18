@@ -74,7 +74,7 @@ public class ChunkedTrackStreamingService {
     private final Map<String, BackpressureMetrics> queryMetrics = new ConcurrentHashMap<>();
     private volatile int currentChunkSizeKB = MAX_MESSAGE_SIZE_KB;
     
-    // track_geom_v2 고정 사용
+    // track_geom 고정 사용
 
     public ChunkedTrackStreamingService(
             @Qualifier("queryJdbcTemplate") JdbcTemplate queryJdbcTemplate,
@@ -1354,14 +1354,14 @@ public class ChunkedTrackStreamingService {
         StringBuilder sql = new StringBuilder();
         sql.append("SELECT sig_src_cd, target_id, time_bucket, ");
 
-        // track_geom_v2 고정 사용
+        // track_geom 고정 사용
         
         // 간소화 적용
         if (simplificationLevel != SimplificationLevel.NONE && simplificationLevel.getTolerance() > 0) {
-            sql.append("ST_AsText(ST_Simplify(track_geom_v2, ").append(simplificationLevel.getTolerance())
+            sql.append("ST_AsText(ST_Simplify(track_geom, ").append(simplificationLevel.getTolerance())
                     .append(")) as track_geom, ");
         } else {
-            sql.append("ST_AsText(track_geom_v2) as track_geom, ");
+            sql.append("ST_AsText(track_geom) as track_geom, ");
         }
 
         sql.append("distance_nm, avg_speed, max_speed, point_count");
@@ -1379,7 +1379,7 @@ public class ChunkedTrackStreamingService {
 
         // Viewport 필터 - 파라미터 바인딩 사용
         if (request.getViewport() != null) {
-            sql.append("AND ST_Intersects(track_geom_v2, ST_MakeEnvelope(?, ?, ?, ?, 4326)) ");
+            sql.append("AND ST_Intersects(track_geom, ST_MakeEnvelope(?, ?, ?, ?, 4326)) ");
         }
 
         // 거리/속도 필터

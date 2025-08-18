@@ -29,7 +29,7 @@ public class HourlyTrackProcessor implements ItemProcessor<VesselTrack.VesselKey
                 .withSecond(0)
                 .withNano(0);
         
-        // track_geom_v2만 사용 (Unix timestamp 병합 쿼리)
+        // track_geom만 사용 (Unix timestamp 병합 쿼리)
         String sql = """
             WITH ordered_tracks AS (
                 SELECT *
@@ -38,7 +38,7 @@ public class HourlyTrackProcessor implements ItemProcessor<VesselTrack.VesselKey
                     AND target_id = ?
                     AND time_bucket >= ?
                     AND time_bucket < ?
-                    AND track_geom_v2 IS NOT NULL
+                    AND track_geom IS NOT NULL
                 ORDER BY time_bucket
             ),
             track_points AS (
@@ -46,8 +46,8 @@ public class HourlyTrackProcessor implements ItemProcessor<VesselTrack.VesselKey
                     o.sig_src_cd,
                     o.target_id,
                     o.time_bucket,
-                    (ST_DumpPoints(o.track_geom_v2)).geom as point,
-                    (ST_DumpPoints(o.track_geom_v2)).path[1] as point_order
+                    (ST_DumpPoints(o.track_geom)).geom as point,
+                    (ST_DumpPoints(o.track_geom)).path[1] as point_order
                 FROM ordered_tracks o
             ),
             merged_tracks AS (
@@ -169,12 +169,12 @@ public class HourlyTrackProcessor implements ItemProcessor<VesselTrack.VesselKey
                 stats.originalPoints, stats.simplifiedPoints, (int)stats.reductionRate);
         }
         
-        // track_geom_v2만 사용
+        // track_geom만 사용
         return VesselTrack.builder()
                 .sigSrcCd(rs.getString("sig_src_cd"))
                 .targetId(rs.getString("target_id"))
                 .timeBucket(hourBucket)
-                .trackGeomV2(simplifiedLineStringM)
+                .trackGeom(simplifiedLineStringM)
                 .distanceNm(rs.getBigDecimal("total_distance"))
                 .avgSpeed(rs.getBigDecimal("avg_speed"))
                 .maxSpeed(rs.getBigDecimal("max_speed"))
