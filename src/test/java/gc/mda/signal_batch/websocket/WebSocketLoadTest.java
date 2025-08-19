@@ -1,11 +1,10 @@
 package gc.mda.signal_batch.websocket;
 
-import gc.mda.signal_batch.dto.websocket.*;
+import gc.mda.signal_batch.global.websocket.dto.*;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.jupiter.api.*;
 import org.springframework.messaging.converter.MappingJackson2MessageConverter;
 import org.springframework.messaging.simp.stomp.*;
-import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 import org.springframework.web.socket.messaging.WebSocketStompClient;
 import org.springframework.web.socket.sockjs.client.SockJsClient;
@@ -21,12 +20,14 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+
 @Slf4j
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 public class WebSocketLoadTest {
     
     private static final String WS_URL = "ws://10.26.252.48:8090/ws-tracks";
     private static final int CONCURRENT_CLIENTS = 10;
+    @SuppressWarnings("unused")
     private static final int QUERIES_PER_CLIENT = 5;
     
     private WebSocketStompClient stompClient;
@@ -379,6 +380,7 @@ public class WebSocketLoadTest {
         }
         
         // Getters
+        @SuppressWarnings("unused")
         public String getClientId() { return clientId; }
         public double getTotalDurationSeconds() { return totalDurationSeconds; }
         public long getTotalChunks() { return totalChunks; }

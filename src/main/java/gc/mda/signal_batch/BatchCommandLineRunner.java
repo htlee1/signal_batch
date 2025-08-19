@@ -1,6 +1,6 @@
 package gc.mda.signal_batch;
 
-import gc.mda.signal_batch.util.BatchUtils;
+import gc.mda.signal_batch.global.util.BatchUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.batch.core.Job;

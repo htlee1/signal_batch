@@ -1,15 +1,13 @@
 package gc.mda.signal_batch.migration.unix_timestamp;
 
-import gc.mda.signal_batch.controller.MigrationController;
+import gc.mda.signal_batch.monitoring.controller.MigrationController;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
-import org.springframework.batch.core.*;
 import org.springframework.batch.core.launch.JobLauncher;
-import org.springframework.batch.core.repository.JobExecutionAlreadyRunningException;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -25,7 +23,9 @@ import java.util.Map;
 public class MissingDataFiller {
     
     private final JdbcTemplate queryJdbcTemplate;
+    @SuppressWarnings("unused")
     private final JdbcTemplate collectJdbcTemplate;  // collectDB 연결 추가
+    @SuppressWarnings("unused")
     private final JobLauncher jobLauncher;
     
     @Transactional
@@ -475,6 +475,7 @@ public class MissingDataFiller {
     /**
      * Unix timestamp 검증 (수정 없이 확인만)
      */
+    @SuppressWarnings("unchecked")
     public MigrationController.VerifyResult verifyUnixTimestamps(String tableName, LocalDateTime timeBucket) {
         MigrationController.VerifyResult result = new MigrationController.VerifyResult();
         
@@ -551,6 +552,7 @@ public class MissingDataFiller {
         }
     }
     
+    @SuppressWarnings("unused")
     private String getInterval(String tableName) {
         switch (tableName.toLowerCase()) {
             case "5min":

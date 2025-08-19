@@ -1,6 +1,6 @@
 package gc.mda.signal_batch.migration.unix_timestamp.strategy;
 
-import gc.mda.signal_batch.model.VesselTrack;
+import gc.mda.signal_batch.domain.vessel.model.VesselTrack;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 

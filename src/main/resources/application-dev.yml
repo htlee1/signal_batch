@@ -87,12 +87,13 @@ logging:
   level:
     root: INFO
     gc.mda.signal_batch: DEBUG
-    gc.mda.signal_batch.util: INFO
-    gc.mda.signal_batch.writer: INFO
-    gc.mda.signal_batch.reader: INFO
-    gc.mda.signal_batch.processor: INFO
-    gc.mda.signal_batch.service: INFO
-    gc.mda.signal_batch.monitor: DEBUG
+    gc.mda.signal_batch.global.util: INFO
+    gc.mda.signal_batch.global.service: INFO
+    gc.mda.signal_batch.batch.writer: INFO
+    gc.mda.signal_batch.batch.reader: INFO
+    gc.mda.signal_batch.batch.processor: INFO
+    gc.mda.signal_batch.domain: INFO
+    gc.mda.signal_batch.monitoring: DEBUG
     org.springframework.batch: INFO
     org.springframework.jdbc: WARN
     org.postgresql: WARN

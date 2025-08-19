@@ -7,8 +7,8 @@ import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.batch.core.launch.JobLauncher;
 import org.springframework.batch.core.repository.JobRepository;
 import org.springframework.scheduling.TaskScheduler;
-import gc.mda.signal_batch.config.WebSocketStompConfig;
-import gc.mda.signal_batch.websocket.interceptor.TrackQueryInterceptor;
+import gc.mda.signal_batch.global.config.WebSocketStompConfig;
+import gc.mda.signal_batch.global.websocket.interceptor.TrackQueryInterceptor;
 
 @SpringBootTest(properties = {
     "spring.batch.job.enabled=false",
