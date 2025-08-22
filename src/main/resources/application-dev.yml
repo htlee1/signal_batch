@@ -88,12 +88,13 @@ logging:
     root: INFO
     gc.mda.signal_batch: DEBUG
     gc.mda.signal_batch.global.util: INFO
-    gc.mda.signal_batch.global.service: INFO
+    gc.mda.signal_batch.global.websocket.service: INFO
     gc.mda.signal_batch.batch.writer: INFO
     gc.mda.signal_batch.batch.reader: INFO
     gc.mda.signal_batch.batch.processor: INFO
     gc.mda.signal_batch.domain: INFO
     gc.mda.signal_batch.monitoring: DEBUG
+    gc.mda.signal_batch.monitoring.controller: INFO
     org.springframework.batch: INFO
     org.springframework.jdbc: WARN
     org.postgresql: WARN
@@ -160,6 +161,13 @@ vessel:  # spring 하위가 아닌 최상위 레벨
       enabled: true
       incremental:
         delay-minutes: 3  # 데이터 수집 지연 고려
+
+    # Batch 메타데이터 정리 설정
+    metadata:
+      cleanup:
+        enabled: true           # 자동 정리 활성화
+        retention-days: 30      # 보존 기간 (30일)
+        dry-run: false         # false: 실제 삭제, true: 테스트만
 
     # 타임아웃 설정
     query-timeout: 1800  # 30분

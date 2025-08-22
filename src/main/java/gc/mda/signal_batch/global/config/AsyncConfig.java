@@ -20,10 +20,13 @@ public class AsyncConfig implements AsyncConfigurer {
     @Bean(name = "trackStreamingExecutor")
     public Executor getAsyncExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(10);
-        executor.setMaxPoolSize(20);
-        executor.setQueueCapacity(100);
+        int cores = Runtime.getRuntime().availableProcessors();
+        executor.setCorePoolSize(cores * 2);
+        executor.setMaxPoolSize(cores * 4);
+        executor.setQueueCapacity(500);
+        executor.setKeepAliveSeconds(60);
         executor.setThreadNamePrefix("track-stream-");
+//        executor.setTaskDecorator(new MdcTaskDecorator());
         executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
         executor.setWaitForTasksToCompleteOnShutdown(true);
         executor.setAwaitTerminationSeconds(60);

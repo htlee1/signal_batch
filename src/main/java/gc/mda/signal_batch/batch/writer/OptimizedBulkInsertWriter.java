@@ -1,5 +1,6 @@
 package gc.mda.signal_batch.batch.writer;
 
+import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import gc.mda.signal_batch.domain.gis.model.TileStatistics;
 import gc.mda.signal_batch.batch.processor.AreaStatisticsProcessor;
 
@@ -7,12 +8,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.google.common.collect.Lists;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.postgresql.copy.CopyManager;
 import org.postgresql.core.BaseConnection;
 import org.springframework.batch.item.Chunk;
 import org.springframework.batch.item.ItemWriter;
+import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -68,6 +71,7 @@ public class OptimizedBulkInsertWriter {
     private final ExecutorService executorService = Executors.newFixedThreadPool(
             Math.max(8, Runtime.getRuntime().availableProcessors() * 2)
     );
+
 
     private static final DateTimeFormatter TIMESTAMP_FORMATTER =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
@@ -151,6 +155,9 @@ public class OptimizedBulkInsertWriter {
                         log.error("Fallback insert also failed", fallbackEx);
                         throw fallbackEx;
                     }
+                } finally {
+                    ////
+                    shutdown();
                 }
             }
         };
@@ -595,6 +602,7 @@ public class OptimizedBulkInsertWriter {
             writeString(baos, value.toString());
         }
     }
+
 
     /**
      * 결과 클래스

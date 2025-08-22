@@ -1,5 +1,6 @@
 package gc.mda.signal_batch.monitoring.controller;
 
+import gc.mda.signal_batch.monitoring.service.BatchMetadataCleanupService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.batch.core.*;
@@ -35,6 +36,8 @@ public class BatchAdminController {
     @Autowired
     @Qualifier("vesselTrackAggregationJob")
     private Job vesselTrackAggregationJob;
+    
+    private final BatchMetadataCleanupService batchMetadataCleanupService;
 
     @Autowired
     @Qualifier("dailyAggregationJob")
@@ -333,34 +336,54 @@ public class BatchAdminController {
             List<Map<String, Object>> failedJobs = new ArrayList<>();
 
             for (String jobName : jobExplorer.getJobNames()) {
-                List<JobInstance> instances = jobExplorer.getJobInstances(jobName, 0, 100);
+                try {
+                    List<JobInstance> instances = jobExplorer.getJobInstances(jobName, 0, 100);
 
-                for (JobInstance instance : instances) {
-                    List<JobExecution> executions = jobExplorer.getJobExecutions(instance);
+                    for (JobInstance instance : instances) {
+                        try {
+                            List<JobExecution> executions = jobExplorer.getJobExecutions(instance);
 
-                    for (JobExecution execution : executions) {
-                        if (execution.getStatus() == BatchStatus.FAILED &&
-                                execution.getStartTime() != null &&
-                                execution.getStartTime().isAfter(since)) {
+                            for (JobExecution execution : executions) {
+                                try {
+                                    if (execution.getStatus() == BatchStatus.FAILED &&
+                                            execution.getStartTime() != null &&
+                                            execution.getStartTime().isAfter(since)) {
 
-                            Map<String, Object> failedJob = new HashMap<>();
-                            failedJob.put("jobName", jobName);
-                            failedJob.put("executionId", execution.getId());
-                            failedJob.put("startTime", execution.getStartTime());
-                            failedJob.put("endTime", execution.getEndTime());
-                            failedJob.put("exitCode", execution.getExitStatus().getExitCode());
-                            failedJob.put("exitDescription", execution.getExitStatus().getExitDescription());
+                                        Map<String, Object> failedJob = new HashMap<>();
+                                        failedJob.put("jobName", jobName);
+                                        failedJob.put("executionId", execution.getId());
+                                        failedJob.put("startTime", execution.getStartTime());
+                                        failedJob.put("endTime", execution.getEndTime());
+                                        failedJob.put("exitCode", execution.getExitStatus().getExitCode());
+                                        failedJob.put("exitDescription", execution.getExitStatus().getExitDescription());
 
-                            // 실패 원인
-                            List<String> failureReasons = new ArrayList<>();
-                            for (Throwable t : execution.getAllFailureExceptions()) {
-                                failureReasons.add(t.getMessage());
+                                        // 실패 원인 - ExecutionContext 오류를 피하기 위해 안전하게 처리
+                                        List<String> failureReasons = new ArrayList<>();
+                                        try {
+                                            for (Throwable t : execution.getAllFailureExceptions()) {
+                                                failureReasons.add(t.getMessage());
+                                            }
+                                        } catch (Exception e) {
+                                            log.warn("Failed to get failure exceptions for execution {}: {}", execution.getId(), e.getMessage());
+                                            failureReasons.add("Failed to retrieve failure details due to ExecutionContext error");
+                                        }
+                                        failedJob.put("failureReasons", failureReasons);
+
+                                        failedJobs.add(failedJob);
+                                    }
+                                } catch (Exception e) {
+                                    log.warn("Failed to process failed execution {}: {}", execution.getId(), e.getMessage());
+                                    // 개별 execution 처리 실패 시 건너뛰기
+                                }
                             }
-                            failedJob.put("failureReasons", failureReasons);
-
-                            failedJobs.add(failedJob);
+                        } catch (Exception e) {
+                            log.warn("Failed to get executions for failed jobs instance {}: {}", instance.getId(), e.getMessage());
+                            // 개별 instance 처리 실패 시 건너뛰기
                         }
                     }
+                } catch (Exception e) {
+                    log.warn("Failed to get instances for failed jobs {}: {}", jobName, e.getMessage());
+                    // 개별 job 처리 실패 시 건너뛰기
                 }
             }
 
@@ -393,43 +416,64 @@ public class BatchAdminController {
             Map<String, Long> jobProcessingTimes = new HashMap<>();
 
             for (String jobName : jobExplorer.getJobNames()) {
-                List<JobInstance> instances = jobExplorer.getJobInstances(jobName, 0, 1000);
+                try {
+                    List<JobInstance> instances = jobExplorer.getJobInstances(jobName, 0, 1000);
 
-                for (JobInstance instance : instances) {
-                    List<JobExecution> executions = jobExplorer.getJobExecutions(instance);
+                    for (JobInstance instance : instances) {
+                        try {
+                            List<JobExecution> executions = jobExplorer.getJobExecutions(instance);
 
-                    for (JobExecution execution : executions) {
-                        if (execution.getStartTime() != null &&
-                                execution.getStartTime().isAfter(since)) {
+                            for (JobExecution execution : executions) {
+                                try {
+                                    if (execution.getStartTime() != null &&
+                                            execution.getStartTime().isAfter(since)) {
 
-                            totalExecutions++;
+                                        totalExecutions++;
 
-                            if (execution.getStatus() == BatchStatus.COMPLETED) {
-                                successfulExecutions++;
-                            } else if (execution.getStatus() == BatchStatus.FAILED) {
-                                failedExecutions++;
+                                        if (execution.getStatus() == BatchStatus.COMPLETED) {
+                                            successfulExecutions++;
+                                        } else if (execution.getStatus() == BatchStatus.FAILED) {
+                                            failedExecutions++;
+                                        }
+
+                                        // 처리 레코드 수 - ExecutionContext 오류를 피하기 위해 안전하게 처리
+                                        long records = 0;
+                                        try {
+                                            records = execution.getStepExecutions().stream()
+                                                    .mapToLong(StepExecution::getReadCount)
+                                                    .sum();
+                                        } catch (Exception e) {
+                                            log.warn("Failed to get read count for execution {}: {}", execution.getId(), e.getMessage());
+                                            // ExecutionContext 오류 시 기본값 0 사용
+                                        }
+                                        totalRecordsProcessed += records;
+
+                                        // 실행 시간
+                                        if (execution.getEndTime() != null) {
+                                            long duration = java.time.Duration.between(
+                                                    execution.getStartTime(),
+                                                    execution.getEndTime()
+                                            ).getSeconds();
+                                            totalDuration += duration;
+
+                                            jobProcessingTimes.merge(jobName, duration, Long::sum);
+                                        }
+
+                                        jobExecutionCounts.merge(jobName, 1, Integer::sum);
+                                    }
+                                } catch (Exception e) {
+                                    log.warn("Failed to process execution {}: {}", execution.getId(), e.getMessage());
+                                    // 개별 execution 처리 실패 시 건너뛰기
+                                }
                             }
-
-                            // 처리 레코드 수
-                            long records = execution.getStepExecutions().stream()
-                                    .mapToLong(StepExecution::getReadCount)
-                                    .sum();
-                            totalRecordsProcessed += records;
-
-                            // 실행 시간
-                            if (execution.getEndTime() != null) {
-                                long duration = java.time.Duration.between(
-                                        execution.getStartTime(),
-                                        execution.getEndTime()
-                                ).getSeconds();
-                                totalDuration += duration;
-
-                                jobProcessingTimes.merge(jobName, duration, Long::sum);
-                            }
-
-                            jobExecutionCounts.merge(jobName, 1, Integer::sum);
+                        } catch (Exception e) {
+                            log.debug("Failed to get executions for instance {}: {}", instance.getId(), e.getMessage());
+                            // 개별 instance 처리 실패 시 건너뛰기 - DEBUG 레벨로 변경하여 로그 스팸 방지
                         }
                     }
+                } catch (Exception e) {
+                    log.warn("Failed to get instances for job {}: {}", jobName, e.getMessage());
+                    // 개별 job 처리 실패 시 건너뛰기
                 }
             }
 
@@ -475,84 +519,88 @@ public class BatchAdminController {
         try {
             Map<String, Object> result = new HashMap<>();
             List<Map<String, Object>> dailyStats = new ArrayList<>();
-            
+
             // 최근 7일간 일별 처리량
             for (int i = 6; i >= 0; i--) {
                 LocalDateTime date = LocalDateTime.now().minusDays(i).withHour(0).withMinute(0).withSecond(0);
                 LocalDateTime nextDate = date.plusDays(1);
-                
+
                 long totalProcessed = 0;
                 int vesselJobCount = 0;
                 int trackJobCount = 0;
-                
+
                 // 모든 Job의 실행 이력 확인
                 for (String jobName : jobExplorer.getJobNames()) {
                     List<JobInstance> instances = jobExplorer.getJobInstances(jobName, 0, 1000);
-                    
+
+                    for (JobInstance instance : instances) {
+                        try {
+                            List<JobExecution> executions = jobExplorer.getJobExecutions(instance);
+
+                            for (JobExecution execution : executions) {
+                                if (execution.getStartTime() != null &&
+                                        execution.getStartTime().isAfter(date) &&
+                                        execution.getStartTime().isBefore(nextDate) &&
+                                        execution.getStatus() == BatchStatus.COMPLETED) {
+
+                                    // 처리된 레코드 수 계산
+                                    long records = execution.getStepExecutions().stream()
+                                            .mapToLong(StepExecution::getWriteCount)
+                                            .sum();
+                                    totalProcessed += records;
+
+                                    // Job 타입별 카운트
+                                    if (jobName.contains("vesselAggregation")) {
+                                        vesselJobCount++;
+                                    } else if (jobName.contains("vesselTrack")) {
+                                        trackJobCount++;
+                                    }
+                                }
+                            }
+                        } catch(Exception e){
+                                log.debug("Failed to get executions for instance {} in daily statistics: {}", instance.getId(), e.getMessage());
+                                // ExecutionContext 역직렬화 실패 시 해당 instance는 건너뛰기
+                            }
+                        }
+                    }
+
+                    Map<String, Object> dailyStat = new HashMap<>();
+                    dailyStat.put("date", date.toLocalDate().toString());
+                    dailyStat.put("totalProcessed", totalProcessed);
+                    dailyStat.put("vesselJobs", vesselJobCount);
+                    dailyStat.put("trackJobs", trackJobCount);
+                    dailyStats.add(dailyStat);
+                }
+
+                // Job 상태별 요약 (Status Distribution Chart용)
+                Map<String, Integer> statusSummary = new HashMap<>();
+                statusSummary.put("completed", 0);
+                statusSummary.put("failed", 0);
+                statusSummary.put("stopped", 0);
+
+                // 최근 24시간 Job 상태 통계
+                LocalDateTime since24h = LocalDateTime.now().minusHours(24);
+                for (String jobName : jobExplorer.getJobNames()) {
+                    List<JobInstance> instances = jobExplorer.getJobInstances(jobName, 0, 200);
+
                     for (JobInstance instance : instances) {
                         List<JobExecution> executions = jobExplorer.getJobExecutions(instance);
-                        
+
                         for (JobExecution execution : executions) {
                             if (execution.getStartTime() != null &&
-                                execution.getStartTime().isAfter(date) &&
-                                execution.getStartTime().isBefore(nextDate) &&
-                                execution.getStatus() == BatchStatus.COMPLETED) {
-                                
-                                // 처리된 레코드 수 계산
-                                long records = execution.getStepExecutions().stream()
-                                        .mapToLong(StepExecution::getWriteCount)
-                                        .sum();
-                                totalProcessed += records;
-                                
-                                // Job 타입별 카운트
-                                if (jobName.contains("vesselAggregation")) {
-                                    vesselJobCount++;
-                                } else if (jobName.contains("vesselTrack")) {
-                                    trackJobCount++;
-                                }
+                                    execution.getStartTime().isAfter(since24h)) {
+
+                                String status = execution.getStatus().toString().toLowerCase();
+                                statusSummary.merge(status, 1, Integer::sum);
                             }
                         }
                     }
                 }
-                
-                Map<String, Object> dailyStat = new HashMap<>();
-                dailyStat.put("date", date.toLocalDate().toString());
-                dailyStat.put("totalProcessed", totalProcessed);
-                dailyStat.put("vesselJobs", vesselJobCount);
-                dailyStat.put("trackJobs", trackJobCount);
-                dailyStats.add(dailyStat);
-            }
-            
-            // Job 상태별 요약 (Status Distribution Chart용)
-            Map<String, Integer> statusSummary = new HashMap<>();
-            statusSummary.put("completed", 0);
-            statusSummary.put("failed", 0);
-            statusSummary.put("stopped", 0);
-            
-            // 최근 24시간 Job 상태 통계
-            LocalDateTime since24h = LocalDateTime.now().minusHours(24);
-            for (String jobName : jobExplorer.getJobNames()) {
-                List<JobInstance> instances = jobExplorer.getJobInstances(jobName, 0, 200);
-                
-                for (JobInstance instance : instances) {
-                    List<JobExecution> executions = jobExplorer.getJobExecutions(instance);
-                    
-                    for (JobExecution execution : executions) {
-                        if (execution.getStartTime() != null &&
-                            execution.getStartTime().isAfter(since24h)) {
-                            
-                            String status = execution.getStatus().toString().toLowerCase();
-                            statusSummary.merge(status, 1, Integer::sum);
-                        }
-                    }
-                }
-            }
-            
-            result.put("dailyStats", dailyStats);
-            result.put("statusSummary", statusSummary);
-            
-            return ResponseEntity.ok(result);
-            
+
+                result.put("dailyStats", dailyStats);
+                result.put("statusSummary", statusSummary);
+
+                return ResponseEntity.ok(result);
         } catch (Exception e) {
             log.error("Failed to get daily statistics", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -573,5 +621,108 @@ public class BatchAdminController {
         return allInstances.stream()
                 .limit(limit)
                 .collect(Collectors.toList());
+    }
+
+    // ======================= Batch Metadata Cleanup APIs =======================
+
+    /**
+     * 배치 메타데이터 정리 실행
+     */
+    @PostMapping("/cleanup")
+    public ResponseEntity<Map<String, Object>> cleanupBatchMetadata() {
+        try {
+            log.info("Manual batch metadata cleanup requested");
+            BatchMetadataCleanupService.CleanupResult result = batchMetadataCleanupService.performCleanup();
+            
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", result.success);
+            response.put("errorMessage", result.errorMessage);
+            
+            // 정리 전후 상태
+            Map<String, Object> before = new HashMap<>();
+            before.put("stepExecutionContext", result.beforeStepExecutionContextCount);
+            before.put("jobExecutionContext", result.beforeJobExecutionContextCount);
+            before.put("stepExecution", result.beforeStepExecutionCount);
+            before.put("jobExecution", result.beforeJobExecutionCount);
+            before.put("jobInstance", result.beforeJobInstanceCount);
+            response.put("before", before);
+            
+            // 삭제된 레코드 수
+            Map<String, Object> deleted = new HashMap<>();
+            deleted.put("stepExecutionContext", result.deletedStepExecutionContextCount);
+            deleted.put("jobExecutionContext", result.deletedJobExecutionContextCount);
+            deleted.put("stepExecution", result.deletedStepExecutionCount);
+            deleted.put("jobExecution", result.deletedJobExecutionCount);
+            deleted.put("jobInstance", result.deletedJobInstanceCount);
+            response.put("deleted", deleted);
+            
+            // 정리 후 상태
+            Map<String, Object> after = new HashMap<>();
+            after.put("stepExecutionContext", result.afterStepExecutionContextCount);
+            after.put("jobExecutionContext", result.afterJobExecutionContextCount);
+            after.put("stepExecution", result.afterStepExecutionCount);
+            after.put("jobExecution", result.afterJobExecutionCount);
+            after.put("jobInstance", result.afterJobInstanceCount);
+            response.put("after", after);
+            
+            if (result.success) {
+                return ResponseEntity.ok(response);
+            } else {
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+            }
+            
+        } catch (Exception e) {
+            log.error("Failed to cleanup batch metadata", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("success", false, "errorMessage", e.getMessage()));
+        }
+    }
+
+    /**
+     * 손상된 ExecutionContext 데이터 정리 (패키지 변경으로 인한 역직렬화 오류)
+     */
+    @PostMapping("/cleanup-corrupted")
+    public ResponseEntity<Map<String, Object>> cleanupCorruptedExecutionContext() {
+        try {
+            log.info("Manual corrupted ExecutionContext cleanup requested");
+            BatchMetadataCleanupService.CleanupResult result = batchMetadataCleanupService.cleanupCorruptedExecutionContext();
+            
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", result.success);
+            response.put("errorMessage", result.errorMessage);
+            response.put("deletedStepExecutionContext", result.deletedStepExecutionContextCount);
+            
+            if (result.success) {
+                return ResponseEntity.ok(response);
+            } else {
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+            }
+            
+        } catch (Exception e) {
+            log.error("Failed to cleanup corrupted ExecutionContext data", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("success", false, "errorMessage", e.getMessage()));
+        }
+    }
+
+    /**
+     * 배치 메타데이터 현재 상태 조회
+     */
+    @GetMapping("/metadata-status")
+    public ResponseEntity<Map<String, Object>> getBatchMetadataStatus() {
+        try {
+            // 여기서는 간단하게 현재 테이블 상태만 조회
+            Map<String, Object> status = new HashMap<>();
+            
+            // 실제 구현에서는 batchMetadataCleanupService에 상태 조회 메소드 추가 필요
+            status.put("message", "Batch metadata status - use cleanup endpoint to see detailed counts");
+            
+            return ResponseEntity.ok(status);
+            
+        } catch (Exception e) {
+            log.error("Failed to get batch metadata status", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", e.getMessage()));
+        }
     }
 }
